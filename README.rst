@@ -611,6 +611,8 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
 **Options**:
 
 - ``-a, --make-arg ARG``: Pass argument to make (can use multiple times)
+- ``-E, --werror``: Treat warnings as errors (sets KCFLAGS=-Werror)
+- ``--fail-on-warning``: Fail if build produces warnings
 - ``-f, --force-reconfig``: Force reconfiguration
 - ``-F, --fresh``: Delete build directory first
 - ``-g, --debug``: Enable debug-friendly optimizations (adds CONFIG_CC_OPTIMIZE_FOR_DEBUG)

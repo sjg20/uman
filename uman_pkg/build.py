@@ -411,7 +411,7 @@ def run(args):
     bm_args = get_buildman_args(args, board, build_dir)
 
     env = None
-    if args.trace or args.gprof:
+    if args.trace or args.gprof or args.werror:
         env = os.environ.copy()
         if args.trace:
             bm_args.extend(['-a', 'TRACE'])
@@ -420,6 +420,8 @@ def run(args):
             env['FTRACE'] = '1'
         if args.gprof:
             env['GPROF'] = '1'
+        if args.werror:
+            env['KCFLAGS'] = '-Werror'
     if args.debug:
         bm_args.extend(['-a', 'CC_OPTIMIZE_FOR_DEBUG'])
 
@@ -437,6 +439,9 @@ def run(args):
         if result.return_code == 101:
             elf_path = os.path.join(build_dir, 'u-boot')
             if os.path.exists(elf_path):
+                if args.fail_on_warning:
+                    tout.error('Build succeeded but produced warnings')
+                    return result.return_code
                 tout.warning('Build succeeded with warnings')
             else:
                 tout.info('Build failed')

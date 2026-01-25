@@ -592,6 +592,54 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertIn('GPROF', captured_env)
         self.assertEqual('1', captured_env.get('GPROF'))
 
+    def test_build_werror_flag(self):
+        """Test -E/--werror flag sets KCFLAGS=-Werror"""
+        args = cmdline.parse_args(['build', 'sandbox', '-E'])
+        self.assertTrue(args.werror)
+
+        captured_env = {}
+
+        def mock_exec_cmd(_cmd, dry_run=False, env=None, capture=True):
+            del dry_run, capture  # unused
+            if env:
+                captured_env.update(env)
+
+        with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+            with mock.patch.object(build, 'setup_uboot_dir',
+                                   return_value='/tmp'):
+                with terminal.capture():
+                    build.run(args)
+
+        self.assertIn('KCFLAGS', captured_env)
+        self.assertEqual('-Werror', captured_env.get('KCFLAGS'))
+
+    def test_build_fail_on_warning_flag(self):
+        """Test --fail-on-warning flag fails on buildman return code 101"""
+        args = cmdline.parse_args(['build', 'sandbox', '--fail-on-warning'])
+        self.assertTrue(args.fail_on_warning)
+
+        def mock_exec_cmd(_cmd, dry_run=False, env=None, capture=True):
+            del dry_run, env, capture  # unused
+            # Return 101 to simulate warnings
+            return command.CommandResult(return_code=101)
+
+        # Create fake u-boot file to simulate successful build with warnings
+        elf_path = os.path.join(self.test_dir, 'sandbox', 'u-boot')
+        os.makedirs(os.path.dirname(elf_path), exist_ok=True)
+        with open(elf_path, 'w') as f:
+            f.write('fake elf')
+
+        with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+            with mock.patch.object(build, 'setup_uboot_dir',
+                                   return_value='/tmp'):
+                with mock.patch.object(build, 'get_dir',
+                                       return_value=os.path.dirname(elf_path)):
+                    with terminal.capture() as (_, err):
+                        result = build.run(args)
+
+        self.assertEqual(101, result)
+        self.assertIn('warnings', err.getvalue())
+
     def test_build_debug_flag(self):
         """Test -g/--debug flag adds -a CC_OPTIMIZE_FOR_DEBUG"""
         args = cmdline.parse_args(['build', 'sandbox', '-g'])

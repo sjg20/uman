@@ -231,6 +231,10 @@ def add_build_subparser(subparsers):
                      help='Adjust Kconfig setting (can use multiple times)')
     bld.add_argument('-f', '--force-reconfig', action='store_true',
                      help='Force reconfiguration')
+    bld.add_argument('-E', '--werror', action='store_true',
+                     help='Treat warnings as errors (KCFLAGS=-Werror)')
+    bld.add_argument('--fail-on-warning', action='store_true',
+                     help='Fail if build produces warnings')
     bld.add_argument('-F', '--fresh', action='store_true',
                      help='Delete build dir first')
     bld.add_argument('-g', '--debug', action='store_true',
