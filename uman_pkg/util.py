@@ -158,7 +158,9 @@ def git_output(*args):
     Raises:
         command.CommandExc: If the command fails
     """
-    return command.output('git', *args).strip()
+    result = command.run_pipe([['git'] + list(args)], capture=True,
+                              raise_on_error=True, binary=True)
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def git_output_quiet(*args):
