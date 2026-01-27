@@ -3222,6 +3222,99 @@ test_sandbox:
         self.assertEqual('na', cmdpy.get_board_test_id('sandbox'))
         self.assertEqual('na', cmdpy.get_board_test_id('unknown_board'))
 
+    def test_get_qemu_binary(self):
+        """Test getting QEMU binary from test hooks config"""
+        # Create test hooks directory structure
+        hooks_dir = os.path.join(self.test_dir, 'test', 'hooks', 'bin',
+                                 'travis-ci')
+        os.makedirs(hooks_dir, exist_ok=True)
+
+        # Create config file for M5208EVBE_qemu
+        config_content = '''console_impl=qemu
+qemu_binary="qemu-system-m68k"
+qemu_machine="mcf5208evb"
+'''
+        config_path = os.path.join(hooks_dir, 'conf.M5208EVBE_qemu')
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+
+        # Test finding the binary
+        binary = cmdpy.get_qemu_binary('M5208EVBE', 'qemu')
+        self.assertEqual('qemu-system-m68k', binary)
+
+        # Test not found
+        binary = cmdpy.get_qemu_binary('unknown_board', 'na')
+        self.assertIsNone(binary)
+
+    def test_check_qemu_binary(self):
+        """Test checking if QEMU binary is available"""
+        # Create test hooks directory structure
+        hooks_dir = os.path.join(self.test_dir, 'test', 'hooks', 'bin',
+                                 'travis-ci')
+        os.makedirs(hooks_dir, exist_ok=True)
+
+        # Create config file with a binary that should exist (python3)
+        config_content = '''console_impl=qemu
+qemu_binary="python3"
+'''
+        config_path = os.path.join(hooks_dir, 'conf.testboard_qemu')
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+
+        # Test binary that exists
+        binary, available = cmdpy.check_qemu_binary('testboard', 'qemu')
+        self.assertEqual('python3', binary)
+        self.assertTrue(available)
+
+        # Create config file with non-existent binary
+        config_content = '''console_impl=qemu
+qemu_binary="nonexistent-qemu-binary-xyz"
+'''
+        config_path = os.path.join(hooks_dir, 'conf.missing_qemu')
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+
+        binary, available = cmdpy.check_qemu_binary('missing', 'qemu')
+        self.assertEqual('nonexistent-qemu-binary-xyz', binary)
+        self.assertFalse(available)
+
+        # Test board with no config (should return None, True)
+        binary, available = cmdpy.check_qemu_binary('noconfig', 'na')
+        self.assertIsNone(binary)
+        self.assertTrue(available)
+
+    def test_pytest_missing_qemu_binary(self):
+        """Test pytest fails early when QEMU binary is not found"""
+        # Create .gitlab-ci.yml with TEST_PY_ID
+        gitlab_content = '''
+test_missing:
+  variables:
+    TEST_PY_BD: "missing_qemu_board"
+    TEST_PY_ID: "--id qemu"
+'''
+        gitlab_file = os.path.join(self.test_dir, '.gitlab-ci.yml')
+        with open(gitlab_file, 'w') as f:
+            f.write(gitlab_content)
+
+        # Create test hooks config with non-existent binary
+        hooks_dir = os.path.join(self.test_dir, 'test', 'hooks', 'bin',
+                                 'travis-ci')
+        os.makedirs(hooks_dir, exist_ok=True)
+        config_content = '''console_impl=qemu
+qemu_binary="nonexistent-qemu-xyz"
+'''
+        config_path = os.path.join(hooks_dir, 'conf.missing_qemu_board_qemu')
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+
+        args = make_args(cmd='pytest', board='missing_qemu_board')
+        with terminal.capture() as (_, err):
+            res = control.run_command(args)
+
+        self.assertEqual(1, res)
+        self.assertIn('QEMU binary not found', err.getvalue())
+        self.assertIn('nonexistent-qemu-xyz', err.getvalue())
+
     def test_get_uboot_dir_current(self):
         """Test get_uboot_dir finds U-Boot in current directory"""
         # setUp already created fake U-Boot tree in self.test_dir

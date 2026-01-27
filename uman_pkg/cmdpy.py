@@ -14,6 +14,7 @@ import glob
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -211,12 +212,69 @@ def get_board_test_id(board):
 
     # Look for TEST_PY_BD: "board" followed by TEST_PY_ID: "--id xxx"
     # The pattern handles YAML format with quotes
-    pattern = rf'TEST_PY_BD:\s*["\']?{re.escape(board)}["\']?\s*\n\s*TEST_PY_ID:\s*["\']?--id\s+(\w+)["\']?'
+    esc = re.escape(board)
+    pattern = (rf'TEST_PY_BD:\s*["\']?{esc}["\']?\s*\n'
+               r'\s*TEST_PY_ID:\s*["\']?--id\s+(\w+)["\']?')
     match = re.search(pattern, content)
     if match:
         return match.group(1)
 
     return 'na'
+
+
+def get_qemu_binary(board, board_id):
+    """Get the QEMU binary required for a board from test hooks config
+
+    Searches for the test hooks configuration file and parses the
+    qemu_binary setting.
+
+    Args:
+        board (str): Board name
+        board_id (str): Board ID (e.g. 'qemu', 'na')
+
+    Returns:
+        str or None: QEMU binary name if found, None otherwise
+    """
+    uboot_dir = get_uboot_dir()
+    if not uboot_dir:
+        return None
+
+    # Search for config file in test hooks directories
+    hooks_dir = os.path.join(uboot_dir, 'test', 'hooks', 'bin')
+    config_name = f'conf.{board}_{board_id}'
+
+    # Check in subdirectories (travis-ci, ellesmere, etc.)
+    for root, _, files in os.walk(hooks_dir):
+        if config_name in files:
+            config_path = os.path.join(root, config_name)
+            try:
+                with open(config_path, 'r', encoding='utf-8') as inf:
+                    for line in inf:
+                        pat = r'qemu_binary=["\']?([^"\']+)["\']?'
+                        match = re.match(pat, line)
+                        if match:
+                            return match.group(1)
+            except OSError:
+                pass
+
+    return None
+
+
+def check_qemu_binary(board, board_id):
+    """Check if the required QEMU binary is available
+
+    Args:
+        board (str): Board name
+        board_id (str): Board ID (e.g. 'qemu', 'na')
+
+    Returns:
+        tuple: (binary_name, is_available) or (None, True) if no QEMU needed
+    """
+    binary = get_qemu_binary(board, board_id)
+    if not binary:
+        return None, True
+
+    return binary, shutil.which(binary) is not None
 
 
 def build_pytest_cmd(args):
@@ -1169,6 +1227,14 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
         os.chdir(uboot_dir)
 
     tout.info(f'Running pytest for board: {args.board}')
+
+    # Check if required QEMU binary is available
+    board_id = get_board_test_id(args.board)
+    qemu_binary, available = check_qemu_binary(args.board, board_id)
+    if qemu_binary and not available:
+        tout.error(f'QEMU binary not found: {qemu_binary}')
+        tout.notice('Try: uman setup qemu')
+        return 1
 
     # Handle -G: set gdbserver if not already set
     if args.gdb and not args.gdbserver:
