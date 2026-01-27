@@ -183,6 +183,42 @@ def list_qemu_boards():
     return list_boards_by_pattern('qemu')
 
 
+def get_board_test_id(board):
+    """Get the TEST_PY_ID for a board from .gitlab-ci.yml
+
+    Parses the .gitlab-ci.yml file to find the TEST_PY_ID setting for the
+    given board.
+
+    Args:
+        board (str): Board name to look up
+
+    Returns:
+        str: The ID value (e.g. 'qemu'), or 'na' if not found
+    """
+    uboot_dir = get_uboot_dir()
+    if not uboot_dir:
+        return 'na'
+
+    gitlab_file = os.path.join(uboot_dir, '.gitlab-ci.yml')
+    if not os.path.exists(gitlab_file):
+        return 'na'
+
+    try:
+        with open(gitlab_file, 'r', encoding='utf-8') as inf:
+            content = inf.read()
+    except OSError:
+        return 'na'
+
+    # Look for TEST_PY_BD: "board" followed by TEST_PY_ID: "--id xxx"
+    # The pattern handles YAML format with quotes
+    pattern = rf'TEST_PY_BD:\s*["\']?{re.escape(board)}["\']?\s*\n\s*TEST_PY_ID:\s*["\']?--id\s+(\w+)["\']?'
+    match = re.search(pattern, content)
+    if match:
+        return match.group(1)
+
+    return 'na'
+
+
 def build_pytest_cmd(args):
     """Build the pytest command line
 
@@ -207,7 +243,8 @@ def build_pytest_cmd(args):
 
     cmd.append('--buildman')
 
-    cmd.extend(['--id', 'na'])
+    board_id = get_board_test_id(args.board)
+    cmd.extend(['--id', board_id])
 
     if args.test_spec:
         # Convert Class:method or Class::method to "Class and method" for -k

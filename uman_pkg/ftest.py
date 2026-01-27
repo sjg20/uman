@@ -3199,6 +3199,29 @@ class TestUmanControl(TestBase):  # pylint: disable=too-many-public-methods
         self.assertIn('qemu-arm', out.getvalue())
         self.assertIn('qemu-riscv64', out.getvalue())
 
+    def test_get_board_test_id(self):
+        """Test getting TEST_PY_ID from .gitlab-ci.yml"""
+        # Create a fake .gitlab-ci.yml
+        gitlab_content = '''
+test_m5208:
+  variables:
+    TEST_PY_BD: "M5208EVBE"
+    TEST_PY_ID: "--id qemu"
+    TEST_PY_TEST_SPEC: "not sleep"
+
+test_sandbox:
+  variables:
+    TEST_PY_BD: "sandbox"
+    TEST_PY_ID: "--id na"
+'''
+        gitlab_file = os.path.join(self.test_dir, '.gitlab-ci.yml')
+        with open(gitlab_file, 'w') as f:
+            f.write(gitlab_content)
+
+        self.assertEqual('qemu', cmdpy.get_board_test_id('M5208EVBE'))
+        self.assertEqual('na', cmdpy.get_board_test_id('sandbox'))
+        self.assertEqual('na', cmdpy.get_board_test_id('unknown_board'))
+
     def test_get_uboot_dir_current(self):
         """Test get_uboot_dir finds U-Boot in current directory"""
         # setUp already created fake U-Boot tree in self.test_dir
