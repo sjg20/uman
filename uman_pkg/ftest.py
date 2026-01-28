@@ -3199,15 +3199,17 @@ class TestUmanControl(TestBase):  # pylint: disable=too-many-public-methods
         self.assertIn('qemu-arm', out.getvalue())
         self.assertIn('qemu-riscv64', out.getvalue())
 
-    def test_get_board_test_id(self):
-        """Test getting TEST_PY_ID from .gitlab-ci.yml"""
+    def test_get_board_gitlab_vars(self):
+        """Test parsing gitlab CI variables for a board"""
         # Create a fake .gitlab-ci.yml
         gitlab_content = '''
 test_m5208:
   variables:
     TEST_PY_BD: "M5208EVBE"
     TEST_PY_ID: "--id qemu"
-    TEST_PY_TEST_SPEC: "not sleep"
+    TEST_PY_TEST_SPEC: "not sleep and not efi"
+    OVERRIDE: "-a CONFIG_M68K_QEMU=y -a ~CONFIG_MCFTMR"
+  <<: *buildman_and_testpy_dfn
 
 test_sandbox:
   variables:
@@ -3218,9 +3220,22 @@ test_sandbox:
         with open(gitlab_file, 'w') as f:
             f.write(gitlab_content)
 
+        # Test get_board_test_id
         self.assertEqual('qemu', cmdpy.get_board_test_id('M5208EVBE'))
         self.assertEqual('na', cmdpy.get_board_test_id('sandbox'))
         self.assertEqual('na', cmdpy.get_board_test_id('unknown_board'))
+
+        # Test get_board_test_spec
+        self.assertEqual('not sleep and not efi',
+                         cmdpy.get_board_test_spec('M5208EVBE'))
+        self.assertIsNone(cmdpy.get_board_test_spec('sandbox'))
+        self.assertIsNone(cmdpy.get_board_test_spec('unknown_board'))
+
+        # Test get_board_override
+        self.assertEqual(['CONFIG_M68K_QEMU=y', '~CONFIG_MCFTMR'],
+                         cmdpy.get_board_override('M5208EVBE'))
+        self.assertEqual([], cmdpy.get_board_override('sandbox'))
+        self.assertEqual([], cmdpy.get_board_override('unknown_board'))
 
     def test_get_qemu_binary(self):
         """Test getting QEMU binary from test hooks config"""

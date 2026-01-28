@@ -184,11 +184,80 @@ def list_qemu_boards():
     return list_boards_by_pattern('qemu')
 
 
+def get_gitlab_content():
+    """Read and cache .gitlab-ci.yml content
+
+    Returns:
+        str: File content, or None if not found
+    """
+    uboot_dir = get_uboot_dir()
+    if not uboot_dir:
+        return None
+
+    gitlab_file = os.path.join(uboot_dir, '.gitlab-ci.yml')
+    if not os.path.exists(gitlab_file):
+        return None
+
+    try:
+        with open(gitlab_file, 'r', encoding='utf-8') as inf:
+            return inf.read()
+    except OSError:
+        return None
+
+
+def get_board_gitlab_vars(board):
+    """Get all CI variables for a board from .gitlab-ci.yml
+
+    Parses the variables section for the board's test job.
+
+    Args:
+        board (str): Board name to look up
+
+    Returns:
+        dict: Variables dict with keys like TEST_PY_ID, TEST_PY_TEST_SPEC,
+            OVERRIDE, or empty dict if not found
+    """
+    content = get_gitlab_content()
+    if not content:
+        return {}
+
+    # Find the variables block for this board
+    esc = re.escape(board)
+    pattern = rf'TEST_PY_BD:\s*["\']?{esc}["\']?'
+    match = re.search(pattern, content)
+    if not match:
+        return {}
+
+    # Get lines after the board name until we hit a blank line
+    start = match.end()
+    lines = content[start:].split('\n')
+
+    result = {}
+    for line in lines:
+        stripped = line.strip()
+        # Skip empty lines at start, stop at blank line after content
+        if not stripped:
+            if result:  # Already have some vars, blank line ends block
+                break
+            continue
+
+        # Stop at non-variable line (but skip <<: anchors)
+        if stripped.startswith('<<:'):
+            continue
+        if not stripped.startswith('TEST_PY_') and \
+           not stripped.startswith('OVERRIDE'):
+            break
+
+        # Parse variable: value
+        var_match = re.match(r'(\w+):\s*["\']?([^"\']+)["\']?', stripped)
+        if var_match:
+            result[var_match.group(1)] = var_match.group(2).strip()
+
+    return result
+
+
 def get_board_test_id(board):
     """Get the TEST_PY_ID for a board from .gitlab-ci.yml
-
-    Parses the .gitlab-ci.yml file to find the TEST_PY_ID setting for the
-    given board.
 
     Args:
         board (str): Board name to look up
@@ -196,30 +265,49 @@ def get_board_test_id(board):
     Returns:
         str: The ID value (e.g. 'qemu'), or 'na' if not found
     """
-    uboot_dir = get_uboot_dir()
-    if not uboot_dir:
-        return 'na'
+    variables = get_board_gitlab_vars(board)
+    test_id = variables.get('TEST_PY_ID', '')
 
-    gitlab_file = os.path.join(uboot_dir, '.gitlab-ci.yml')
-    if not os.path.exists(gitlab_file):
-        return 'na'
-
-    try:
-        with open(gitlab_file, 'r', encoding='utf-8') as inf:
-            content = inf.read()
-    except OSError:
-        return 'na'
-
-    # Look for TEST_PY_BD: "board" followed by TEST_PY_ID: "--id xxx"
-    # The pattern handles YAML format with quotes
-    esc = re.escape(board)
-    pattern = (rf'TEST_PY_BD:\s*["\']?{esc}["\']?\s*\n'
-               r'\s*TEST_PY_ID:\s*["\']?--id\s+(\w+)["\']?')
-    match = re.search(pattern, content)
+    # Parse "--id xxx" format
+    match = re.match(r'--id\s+(\w+)', test_id)
     if match:
         return match.group(1)
 
     return 'na'
+
+
+def get_board_test_spec(board):
+    """Get the TEST_PY_TEST_SPEC for a board from .gitlab-ci.yml
+
+    Args:
+        board (str): Board name to look up
+
+    Returns:
+        str: The test spec (e.g. 'not sleep and not efi'), or None if not set
+    """
+    variables = get_board_gitlab_vars(board)
+    return variables.get('TEST_PY_TEST_SPEC')
+
+
+def get_board_override(board):
+    """Get the OVERRIDE config adjustments for a board from .gitlab-ci.yml
+
+    Args:
+        board (str): Board name to look up
+
+    Returns:
+        list: List of adjust_cfg values (e.g. ['CONFIG_M68K_QEMU=y',
+            '~CONFIG_MCFTMR']), or empty list if not set
+    """
+    variables = get_board_gitlab_vars(board)
+    override = variables.get('OVERRIDE', '')
+
+    # Parse "-a CONFIG_FOO=y -a ~CONFIG_BAR" format
+    adjustments = []
+    for match in re.finditer(r'-a\s+(\S+)', override):
+        adjustments.append(match.group(1))
+
+    return adjustments
 
 
 def get_qemu_binary(board, board_id):
@@ -304,11 +392,21 @@ def build_pytest_cmd(args):
     board_id = get_board_test_id(args.board)
     cmd.extend(['--id', board_id])
 
+    # Build test spec from user args and gitlab defaults
+    spec_parts = []
     if args.test_spec:
         # Convert Class:method or Class::method to "Class and method" for -k
         spec = ' '.join(args.test_spec)
         spec = spec.replace('::', ' and ').replace(':', ' and ')
-        cmd.extend(['-k', spec])
+        spec_parts.append(spec)
+
+    # Add gitlab TEST_PY_TEST_SPEC as default filter
+    gitlab_spec = get_board_test_spec(args.board)
+    if gitlab_spec:
+        spec_parts.append(f'({gitlab_spec})')
+
+    if spec_parts:
+        cmd.extend(['-k', ' and '.join(spec_parts)])
 
     if args.no_timeout:
         cmd.append('--no-timeout')
@@ -1242,9 +1340,16 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
 
     # Build with um if requested, rather than letting pytest do it
     if args.build:
+        # Combine user adjust_cfg with gitlab OVERRIDE values
+        adjust_cfg = list(args.adjust_cfg) if args.adjust_cfg else []
+        gitlab_override = get_board_override(args.board)
+        for cfg in gitlab_override:
+            if cfg not in adjust_cfg:
+                adjust_cfg.append(cfg)
+
         if not build_mod.build_board(
                 args.board, args.dry_run, args.lto,
-                adjust_cfg=args.adjust_cfg,
+                adjust_cfg=adjust_cfg,
                 force_reconfig=args.force_reconfig, fresh=args.fresh,
                 jobs=args.jobs, trace=args.trace,
                 trace_early=not args.no_trace_early,
