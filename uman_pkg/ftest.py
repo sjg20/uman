@@ -4497,15 +4497,20 @@ Tests run: 1, failures: 1
             return command.CommandResult(return_code=0,
                                          stdout='Result: PASS dm_test\n')
 
+        def mock_resolve(sandbox, specs):
+            return specs, []
+
         args = cmdline.parse_args(['test', 'dm'])
         args.col = terminal.Color()
         with mock.patch.object(cmdtest, 'get_sandbox_path', return_value='/sb'):
-            with mock.patch.object(cmdtest, 'validate_specs', return_value=[]):
-                with mock.patch.object(cmdtest, 'ensure_dm_init_files',
-                                       return_value=True):
-                    with mock.patch.object(command, 'run_one', mock_run):
-                        with terminal.capture():
-                            result = cmdtest.do_test(args)
+            with mock.patch.object(cmdtest, 'resolve_specs', mock_resolve):
+                with mock.patch.object(cmdtest, 'validate_specs',
+                                       return_value=[]):
+                    with mock.patch.object(cmdtest, 'ensure_dm_init_files',
+                                           return_value=True):
+                        with mock.patch.object(command, 'run_one', mock_run):
+                            with terminal.capture():
+                                result = cmdtest.do_test(args)
         self.assertEqual(0, result)
         self.assertEqual(('/sb', '-T', '-F', '-c', 'ut -E dm'), cap[0])
 
@@ -4555,10 +4560,32 @@ Tests run: 1, failures: 1
                          cmdtest.parse_test_specs(['dm', 'env']))
 
     def test_resolve_specs_with_suite(self):
-        """Test resolve_specs passes through specs with suite"""
+        """Test resolve_specs passes through specs with known suite"""
+        all_tests = [('dm', 'test_acpi'), ('env', 'test_basic')]
         specs = [('dm', None), ('env', 'basic')]
-        resolved, unmatched = cmdtest.resolve_specs('/path/to/sandbox', specs)
+
+        with mock.patch.object(cmdtest, 'get_tests_from_nm',
+                               return_value=all_tests):
+            resolved, unmatched = cmdtest.resolve_specs(
+                '/path/to/sandbox', specs)
+
         self.assertEqual(specs, resolved)
+        self.assertEqual([], unmatched)
+
+    def test_resolve_specs_unknown_suite_finds_test(self):
+        """Test resolve_specs finds test when parsed suite doesn't exist"""
+        # 'editenv_test_base' parses as suite='editenv', pattern='base'
+        # but 'editenv' isn't a suite - the test is in 'bootstd'
+        all_tests = [('bootstd', 'editenv_test_base'),
+                     ('bootstd', 'cedit_base'),
+                     ('dm', 'test_acpi')]
+
+        with mock.patch.object(cmdtest, 'get_tests_from_nm',
+                               return_value=all_tests):
+            resolved, unmatched = cmdtest.resolve_specs(
+                '/path/to/sandbox', [('editenv', 'base')])
+
+        self.assertEqual([('bootstd', 'editenv_test_base')], resolved)
         self.assertEqual([], unmatched)
 
     def test_resolve_specs_finds_suite(self):

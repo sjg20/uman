@@ -319,7 +319,7 @@ def parse_test_specs(tests):
 
 
 def resolve_specs(sandbox, specs):
-    """Resolve specs with suite=None by looking up from nm
+    """Resolve specs with suite=None or invalid suite by looking up from nm
 
     Args:
         sandbox (str): Path to sandbox executable
@@ -331,9 +331,34 @@ def resolve_specs(sandbox, specs):
     resolved = []
     unmatched = []
     all_tests = None  # Lazy load
+    known_suites = None  # Lazy load
 
     for suite, pattern in specs:
-        if suite is not None:
+        if suite is not None and suite != 'all':
+            # Check if suite exists
+            if known_suites is None:
+                if all_tests is None:
+                    all_tests = get_tests_from_nm(sandbox)
+                known_suites = {s for s, _ in all_tests}
+
+            if suite in known_suites:
+                resolved.append((suite, pattern))
+            else:
+                # Suite doesn't exist - try to find full test name
+                # Reconstruct the original test name
+                if pattern:
+                    full_name = f'{suite}_test_{pattern}'
+                else:
+                    full_name = suite
+                found = False
+                for test_suite, test_name in all_tests:
+                    if test_name == full_name:
+                        resolved.append((test_suite, full_name))
+                        found = True
+                        break
+                if not found:
+                    unmatched.append((suite, pattern))
+        elif suite == 'all':
             resolved.append((suite, pattern))
         else:
             # Need to find suite(s) for this pattern
