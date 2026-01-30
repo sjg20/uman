@@ -1095,6 +1095,30 @@ class TestGitSubcommand(TestBase):
             upstream = cmdgit.get_upstream()
         self.assertEqual('origin/main', upstream)
 
+    def test_get_upstream_during_rebase(self):
+        """Test get_upstream finds original branch's upstream during rebase"""
+        # Simulate being in a rebase with head-name file
+        rebase_dir = tempfile.mkdtemp()
+        head_name_file = os.path.join(rebase_dir, 'head-name')
+        with open(head_name_file, 'w') as f:
+            f.write('refs/heads/feature\n')
+
+        def mock_git_output(*args):
+            # @{upstream} fails (detached HEAD during rebase)
+            if args[2] == '@{upstream}':
+                raise command.CommandExc('no upstream', None)
+            # feature@{upstream} succeeds
+            if args[2] == 'feature@{upstream}':
+                return 'origin/main'
+            return ''
+
+        with mock.patch('uman_pkg.cmdgit.get_rebase_dir',
+                        return_value=rebase_dir):
+            with mock.patch('uman_pkg.cmdgit.git_output_quiet', mock_git_output):
+                upstream = cmdgit.get_upstream()
+
+        self.assertEqual('origin/main', upstream)
+
     def test_get_rebase_dir_not_rebasing(self):
         """Test get_rebase_dir returns None when not rebasing"""
         def mock_git_output(*_args):
