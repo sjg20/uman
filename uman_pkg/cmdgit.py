@@ -326,12 +326,10 @@ def do_rn(args):
         tout.error('Rebase todo file not found')
         return 1
 
-    # If there are staged changes, insert break and continue
-    # Amend changes if at edit point or break point (not conflict resolution)
+    # If there are staged changes, amend if at edit/break point, then continue
     if has_staged_changes():
-        # Capture position before continuing, since git will advance the counter
+        # Capture position before continuing (git will advance the counter)
         pos = get_rebase_position()
-        pos_str = f' {pos}:' if pos else ':'
 
         with open(todo_file, 'r', encoding='utf-8') as inf:
             lines = inf.readlines()
@@ -358,12 +356,15 @@ def do_rn(args):
                 tout.error('Failed to amend changes')
                 return result
 
-        # Insert break at the beginning of todo
+        # Insert break to stop for review
         lines.insert(0, 'break\n')
         with open(todo_file, 'w', encoding='utf-8') as outf:
             outf.writelines(lines)
+
         result = git('rebase', '--continue')
         if result.return_code == 0:
+            # Use captured position (not git's inflated count from break)
+            pos_str = f' {pos}:' if pos else ':'
             commit = git_output('rev-parse', '--short', 'HEAD')
             subject = git_output('log', '-1', '--format=%s')
             tout.notice(f'Rebasing{pos_str} review  {commit}... {subject}')

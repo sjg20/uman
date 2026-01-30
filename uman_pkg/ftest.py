@@ -2343,11 +2343,10 @@ class TestGitRebase(TestBase, GitRepoMixin):
         self.assertEqual('AA file2.txt\n',
                          command.output('git', 'status', '--porcelain'))
 
-        # Resolve file2.txt and use rn 2 - the 2 is ignored since we have
-        # staged changes; rn inserts break and stops at Commit 2
+        # Resolve file2.txt and use rn - stops at Commit 2 for review
         tools.write_file('file2.txt', 'resolved 2', binary=False)
         command.output('git', 'add', 'file2.txt')
-        args = cmdline.parse_args(['git', 'rn', '2'])
+        args = cmdline.parse_args(['git', 'rn'])
         with terminal.capture() as (out, err):
             result = cmdgit.do_rn(args)
         self.assertEqual(0, result.return_code)
@@ -2371,7 +2370,7 @@ class TestGitRebase(TestBase, GitRepoMixin):
         self.assertEqual('AA file3.txt\n',
                          command.output('git', 'status', '--porcelain'))
 
-        # Resolve file3.txt and use rn - rn inserts break, stops at Commit 3
+        # Resolve file3.txt and use rn - stops at Commit 3 for review
         tools.write_file('file3.txt', 'resolved 3', binary=False)
         command.output('git', 'add', 'file3.txt')
         args = cmdline.parse_args(['git', 'rn'])
