@@ -916,71 +916,19 @@ def run_with_gdb(args):
     # Build gdb command
     gdb_cmd = [
         'gdb-multiarch',
+        '-q',  # Quiet mode (suppress startup banner)
         uboot_exe,
+        '-iex', 'set auto-load safe-path /',  # Auto-load .gdbinit
+        '-iex', 'set debuginfod enabled off',  # Disable debuginfod prompts
+        '-iex', 'set sysroot',  # Suppress remote file transfer warnings
         '-ex', f'target remote {channel}',
-        '-ex', 'continue',
     ]
 
     tout.info(f"Running: {' '.join(gdb_cmd)}")
 
-    # Parse host:port from channel
-    if ':' in channel:
-        host, port = channel.rsplit(':', 1)
-        port = int(port)
-    else:
-        host, port = 'localhost', int(channel)
-
-    def port_alive():
-        """Check if gdbserver port is accepting connections"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)
-            sock.connect((host, port))
-            sock.close()
-            return True
-        except (ConnectionRefusedError, socket.timeout, OSError):
-            return False
-
-    # Run gdb in a loop, reconnecting when server restarts
-    reconnect_timeout = 5  # seconds to wait for server after gdb disconnects
-    while True:
-        # pylint: disable=consider-using-with
-        proc = subprocess.Popen(gdb_cmd)
-
-        # Wait for gdb to connect before monitoring
-        time.sleep(1)
-
-        # Monitor for server to become available (indicates U-Boot restarted)
-        # While gdb is connected, the port is occupied so port_alive() is False
-        # When U-Boot restarts, gdbserver listens again and port_alive() is True
-        try:
-            while proc.poll() is None:
-                if port_alive():
-                    # Server is accepting connections - U-Boot restarted
-                    tout.notice('Server restarted, reconnecting...')
-                    proc.terminate()
-                    proc.wait()
-                    break
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            proc.terminate()
-            proc.wait()
-            break
-
-        # gdb exited - wait briefly for server to come back
-        if proc.returncode is not None:
-            start = time.time()
-            while time.time() - start < reconnect_timeout:
-                if port_alive():
-                    tout.notice('Server restarted, reconnecting...')
-                    break
-                time.sleep(0.2)
-            else:
-                # Server didn't come back, tests finished
-                tout.notice('Server not responding, exiting')
-                break
-
-    return 0
+    # Run gdb and wait for user to exit
+    result = subprocess.run(gdb_cmd, check=False)
+    return result.returncode
 
 
 def collect_tests(args):
