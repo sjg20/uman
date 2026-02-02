@@ -174,10 +174,10 @@ def add_pytest_subparser(subparsers):
         help='Find tests matching PATTERN and show full IDs')
     pyt.add_argument(
         '-g', action='store_const', const='localhost:1234', dest='gdbserver',
-        help='Run sandbox under gdbserver at localhost:1234')
+        help='Start gdbserver (wait for gdb client to connect)')
     pyt.add_argument(
         '-G', '--gdb', action='store_true',
-        help='Run under gdbserver and launch gdb-multiarch connected to it')
+        help='Launch gdb client (connect to existing gdbserver from -g)')
     pyt.add_argument(
         '-l', '--list', action='store_true', dest='list_boards',
         help='List available QEMU boards')
