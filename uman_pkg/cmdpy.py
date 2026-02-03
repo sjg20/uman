@@ -1220,10 +1220,15 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
     if args.list_boards:
         qemu_boards = list_qemu_boards()
         sandbox_boards = list_boards_by_pattern('sandbox')
+        mips_boards = list_boards_by_pattern('malta')
         m68k_boards = list_boards_by_pattern('M5208')
         if qemu_boards:
             tout.notice('Available QEMU boards:')
             for board in qemu_boards:
+                print(f'  {board}')
+        if mips_boards:
+            tout.notice('Available MIPS boards:')
+            for board in mips_boards:
                 print(f'  {board}')
         if m68k_boards:
             tout.notice('Available m68k boards:')
@@ -1233,7 +1238,7 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
             tout.notice('Available sandbox boards:')
             for board in sandbox_boards:
                 print(f'  {board}')
-        if not qemu_boards and not sandbox_boards and not m68k_boards:
+        if not qemu_boards and not sandbox_boards and not mips_boards and not m68k_boards:
             tout.warning('No boards found (is buildman configured?)')
         return 0
 

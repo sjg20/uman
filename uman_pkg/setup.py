@@ -102,6 +102,7 @@ QEMU_PACKAGES = {
                          'qemu-riscv32_spl', 'qemu-riscv64',
                          'qemu-riscv64_smode', 'qemu-riscv64_smode_acpi',
                          'qemu-riscv64_spl', 'qemu-xtensa-dc233c'],
+    'qemu-system-mips': ['malta', 'maltael', 'malta64', 'malta64el'],
     'qemu-system-ppc': ['qemu-ppce500'],
     'qemu-system-x86': ['qemu-x86', 'qemu-x86_64'],
 }
