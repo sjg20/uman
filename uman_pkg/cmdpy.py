@@ -427,6 +427,8 @@ def build_pytest_cmd(args):
         cmd.extend(['--gdbserver', args.gdbserver])
     if args.exitfirst:
         cmd.append('-x')
+    if args.stop_at:
+        cmd.extend(['-p', 'uman_pkg.stop_at', '--stop-at', args.stop_at])
     if not args.flattree_too:
         cmd.append('--no-full')
 
@@ -1321,6 +1323,11 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
 
     env = os.environ.copy()
     env.update(pytest_vars)
+
+    if args.stop_at:
+        uman_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = env.get('PYTHONPATH', '')
+        env['PYTHONPATH'] = f'{uman_dir}:{path}' if path else uman_dir
 
     # Handle -G: just launch gdb to connect to existing gdbserver
     if args.gdb:

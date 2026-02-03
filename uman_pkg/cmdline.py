@@ -204,6 +204,9 @@ def add_pytest_subparser(subparsers):
         '-x', '--exitfirst', action='store_true',
         help='Stop on first test failure')
     pyt.add_argument(
+        '--stop-at', metavar='TEST',
+        help='Stop after the named test completes')
+    pyt.add_argument(
         '--pollute', metavar='TEST',
         help='Find which test pollutes TEST (causes it to fail)')
     pyt.add_argument(

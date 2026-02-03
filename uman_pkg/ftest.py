@@ -148,6 +148,7 @@ def make_args(**kwargs):
         'setup_only': False,
         'show_cmd': False,
         'show_output': False,
+        'stop_at': None,
         'sjg': None,
         'suites': False,
         'test_spec': [],
@@ -3026,6 +3027,31 @@ class TestUmanControl(TestBase):  # pylint: disable=too-many-public-methods
         cmd = cap[-1]
         self.assertIn('--fs-type', cmd)
         self.assertIn('ext4', cmd)
+
+    def test_pytest_stop_at(self):
+        """Test pytest command with --stop-at option"""
+        cap = []
+
+        def mock_subprocess_run(cmd, **_kwargs):
+            cap.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        args = cmdline.parse_args(
+            ['py', '-B', 'sandbox', '--stop-at', 'test_exit'])
+        self.assertEqual('test_exit', args.stop_at)
+
+        with mock.patch('subprocess.run', mock_subprocess_run):
+            with terminal.capture():
+                res = control.run_command(args)
+        self.assertEqual(0, res)
+
+        cmd = cap[-1]
+        self.assertIn('-p', cmd)
+        idx = cmd.index('-p')
+        self.assertEqual('uman_pkg.stop_at', cmd[idx + 1])
+        self.assertIn('--stop-at', cmd)
+        idx = cmd.index('--stop-at')
+        self.assertEqual('test_exit', cmd[idx + 1])
 
     def test_valid_pytest_value(self):
         """Test validation of valid pytest values"""
