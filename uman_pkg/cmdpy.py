@@ -928,11 +928,9 @@ def run_with_gdb(args):
         print(' '.join(gdb_cmd))
         return 0
 
-    tout.info(f"Running: {' '.join(gdb_cmd)}")
-
-    # Run gdb and wait for user to exit
-    result = subprocess.run(gdb_cmd, check=False)
-    return result.returncode
+    # Run gdb interactively
+    result = exec_cmd(gdb_cmd, dry_run=False, capture=False)
+    return result.return_code
 
 
 def collect_tests(args):
