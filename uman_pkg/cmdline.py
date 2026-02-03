@@ -365,6 +365,9 @@ def add_config_subparser(subparsers):
         'config', aliases=['cfg'],
         help='Examine U-Boot configuration')
     cfg.add_argument(
+        '-b', '--build', action='store_true',
+        help='Build before examining config')
+    cfg.add_argument(
         '-B', '--board', metavar='BOARD',
         help='Board name (required; or set $b)')
     cfg.add_argument(
@@ -376,9 +379,7 @@ def add_config_subparser(subparsers):
     cfg.add_argument(
         '-s', '--sync', action='store_true',
         help='Resync defconfig from .config (build cfg, savedefconfig, copy)')
-    cfg.add_argument(
-        '--build-dir', metavar='DIR',
-        help='Override build directory (default: /tmp/b/BOARD)')
+    add_build_opts(cfg)
     return cfg
 
 

@@ -851,7 +851,7 @@ CONFIG_DM_TEST=y
     def test_config_grep(self):
         """Test config grep finds matches"""
         args = cmdline.parse_args(['config', '-B', 'sandbox', '-g', 'VIDEO',
-                                   '--build-dir', self.build_dir])
+                                   '-o', self.build_dir])
         with terminal.capture() as (out, _):
             ret = cmdconfig.run(args)
         self.assertEqual(0, ret)
@@ -861,7 +861,7 @@ CONFIG_DM_TEST=y
     def test_config_grep_case_insensitive(self):
         """Test config grep is case-insensitive"""
         args = cmdline.parse_args(['config', '-B', 'sandbox', '-g', 'video',
-                                   '--build-dir', self.build_dir])
+                                   '-o', self.build_dir])
         with terminal.capture() as (out, _):
             ret = cmdconfig.run(args)
         self.assertEqual(0, ret)
@@ -871,7 +871,7 @@ CONFIG_DM_TEST=y
         """Test config grep with no matches"""
         args = cmdline.parse_args(
             ['config', '-B', 'sandbox', '-g', 'NONEXISTENT',
-             '--build-dir', self.build_dir])
+             '-o', self.build_dir])
         with terminal.capture() as (out, _):
             ret = cmdconfig.run(args)
         self.assertEqual(0, ret)
@@ -901,7 +901,7 @@ CONFIG_DM_TEST=y
     def test_config_missing_config_file(self):
         """Test config fails when .config not found"""
         args = cmdline.parse_args(['config', '-B', 'sandbox', '-g', 'VIDEO',
-                                   '--build-dir', '/nonexistent/path'])
+                                   '-o', '/nonexistent/path'])
         with terminal.capture() as (_, err):
             ret = cmdconfig.run(args)
         self.assertEqual(1, ret)
@@ -923,7 +923,7 @@ CONFIG_DM_TEST=y
             return command.CommandResult(return_code=0)
 
         args = cmdline.parse_args(['config', '-B', 'sandbox', '-s',
-                                   '--build-dir', self.build_dir])
+                                   '-o', self.build_dir])
         # Create defconfig in build dir for copy
         with open(os.path.join(self.build_dir, 'defconfig'), 'w',
                   encoding='utf-8') as outf:
@@ -962,7 +962,7 @@ CONFIG_DM_TEST=y
             return command.CommandResult(return_code=0)
 
         args = cmdline.parse_args(['config', '-B', 'sandbox', '-m',
-                                   '--build-dir', self.build_dir])
+                                   '-o', self.build_dir])
         # Create defconfig in build dir
         with open(os.path.join(self.build_dir, 'defconfig'), 'w',
                   encoding='utf-8') as outf:
@@ -984,6 +984,33 @@ CONFIG_DM_TEST=y
         self.assertIn('make', cap[1])
         self.assertIn('savedefconfig', cap[1])
         self.assertEqual('meld', cap[2][0])
+
+    def test_config_build_before_grep(self):
+        """Test -b triggers build before grep"""
+        args = cmdline.parse_args(['config', '-B', 'sandbox', '-b',
+                                   '-g', 'VIDEO', '-o', self.build_dir])
+        with mock.patch.object(build, 'build_board',
+                               return_value=True) as mock_build:
+            with terminal.capture() as (out, _):
+                ret = cmdconfig.run(args)
+        self.assertEqual(0, ret)
+        mock_build.assert_called_once_with(
+            'sandbox', False, False, adjust_cfg=None,
+            force_reconfig=False, fresh=False, jobs=None, trace=False,
+            trace_early=True, output_dir=self.build_dir)
+        self.assertIn('CONFIG_VIDEO=y', out.getvalue())
+
+    def test_config_build_failure(self):
+        """Test -b returns error on build failure"""
+        args = cmdline.parse_args(['config', '-B', 'sandbox', '-b',
+                                   '-g', 'VIDEO', '-o', self.build_dir])
+        with mock.patch.object(build, 'build_board',
+                               return_value=False) as mock_build:
+            with terminal.capture() as (out, err):
+                ret = cmdconfig.run(args)
+        self.assertEqual(1, ret)
+        mock_build.assert_called_once()
+        self.assertFalse(out.getvalue())
 
 
 class TestGitSubcommand(TestBase):

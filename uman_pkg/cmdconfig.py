@@ -16,24 +16,21 @@ import shutil
 from u_boot_pylib import tout
 
 from uman_pkg import build as build_mod
-from uman_pkg import settings
 from uman_pkg.util import exec_cmd, get_uboot_dir
 
 
-def get_config_path(board, build_dir=None):
+def get_config_path(board, output_dir=None):
     """Get the path to the .config file for a board
 
     Args:
         board (str): Board name
-        build_dir (str): Build directory override, or None for default
+        output_dir (str): Build directory override, or None for default
 
     Returns:
         str: Path to the .config file
     """
-    if not build_dir:
-        base_dir = settings.get('build_dir', '/tmp/b')
-        build_dir = os.path.join(base_dir, board)
-    return os.path.join(build_dir, '.config')
+    bdir = output_dir or build_mod.get_dir(board)
+    return os.path.join(bdir, '.config')
 
 
 def do_grep(args):
@@ -50,7 +47,16 @@ def do_grep(args):
         tout.error('Board is required: use -B BOARD or set $b')
         return 1
 
-    config_path = get_config_path(board, args.build_dir)
+    if args.build and not build_mod.build_board(
+            board, args.dry_run, args.lto,
+            adjust_cfg=args.adjust_cfg,
+            force_reconfig=args.force_reconfig, fresh=args.fresh,
+            jobs=args.jobs, trace=args.trace,
+            trace_early=not args.no_trace_early,
+            output_dir=args.output_dir):
+        return 1
+
+    config_path = get_config_path(board, args.output_dir)
     if not os.path.exists(config_path):
         tout.error(f'Config file not found: {config_path}')
         tout.error(f'Build the board first: um b {board}')
@@ -89,12 +95,21 @@ def do_sync(args, use_meld=False):
         tout.error('Board is required: use -B BOARD or set $b')
         return 1
 
+    if args.build and not build_mod.build_board(
+            board, args.dry_run, args.lto,
+            adjust_cfg=args.adjust_cfg,
+            force_reconfig=args.force_reconfig, fresh=args.fresh,
+            jobs=args.jobs, trace=args.trace,
+            trace_early=not args.no_trace_early,
+            output_dir=args.output_dir):
+        return 1
+
     uboot_dir = get_uboot_dir()
     if not uboot_dir:
         tout.error('Not in a U-Boot tree and $USRC not set')
         return 1
 
-    build_dir = args.build_dir or build_mod.get_dir(board)
+    build_dir = args.output_dir or build_mod.get_dir(board)
     defconfig_path = os.path.join(uboot_dir, 'configs', f'{board}_defconfig')
 
     # Change to U-Boot directory for make
