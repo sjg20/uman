@@ -67,6 +67,8 @@ def build_ci_vars(args):
             # not provided (None) and provided with default value ('1')
             if args.pytest is not None:
                 ci_vars['PYTEST'] = args.pytest
+                # Pytest jobs depend on the tools suite
+                ci_vars['SUITES'] = '1'
             if args.world:
                 ci_vars['WORLD'] = '1'
             if args.sjg is not None:

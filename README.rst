@@ -154,6 +154,9 @@ for that board, or exact job names (like ``"sandbox with clang test.py"``) to
 target specific job variants. Use ``-p help`` or ``-l help`` to see all
 available choices.
 
+**Note**: Using ``-p`` automatically enables the tools suite (SUITES=1), since
+the pytest jobs depend on it.
+
 Merge Request Creation
 ~~~~~~~~~~~~~~~~~~~~~~
 

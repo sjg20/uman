@@ -2655,7 +2655,7 @@ class TestUmanCIVars(TestBase):
         args = make_args(pytest='coreboot')
         ci_vars = control.build_ci_vars(args)
         expected = {
-            'SUITES': '0',
+            'SUITES': '1',
             'PYTEST': 'coreboot',
             'WORLD': '0',
             'SJG_LAB': ''
@@ -2667,7 +2667,7 @@ class TestUmanCIVars(TestBase):
         args = make_args(pytest='coreboot', sjg='bbb')
         ci_vars = control.build_ci_vars(args)
         expected = {
-            'SUITES': '0',
+            'SUITES': '1',
             'PYTEST': 'coreboot',
             'WORLD': '0',
             'SJG_LAB': 'bbb'
@@ -2680,7 +2680,7 @@ class TestUmanCIVars(TestBase):
         args = make_args(pytest='sandbox')
         ci_vars = control.build_ci_vars(args)
         expected = {
-            'SUITES': '0',
+            'SUITES': '1',
             'PYTEST': 'sandbox',
             'WORLD': '0',
             'SJG_LAB': ''
@@ -2692,7 +2692,7 @@ class TestUmanCIVars(TestBase):
         args = make_args(pytest='coreboot', test_spec='test_ofplatdata')
         ci_vars = control.build_ci_vars(args)
         expected = {
-            'SUITES': '0',
+            'SUITES': '1',
             'PYTEST': 'coreboot',
             'WORLD': '0',
             'SJG_LAB': '',
@@ -2705,7 +2705,7 @@ class TestUmanCIVars(TestBase):
         args = make_args(pytest='sandbox with clang test.py')
         ci_vars = control.build_ci_vars(args)
         expected = {
-            'SUITES': '0',
+            'SUITES': '1',
             'PYTEST': 'sandbox with clang test.py',
             'WORLD': '0',
             'SJG_LAB': ''
