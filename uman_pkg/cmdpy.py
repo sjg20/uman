@@ -924,6 +924,10 @@ def run_with_gdb(args):
         '-ex', f'target remote {channel}',
     ]
 
+    if args.dry_run:
+        print(' '.join(gdb_cmd))
+        return 0
+
     tout.info(f"Running: {' '.join(gdb_cmd)}")
 
     # Run gdb and wait for user to exit

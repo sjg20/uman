@@ -3353,6 +3353,21 @@ qemu_binary="nonexistent-qemu-xyz"
         self.assertIn('QEMU binary not found', err.getvalue())
         self.assertIn('nonexistent-qemu-xyz', err.getvalue())
 
+    def test_pytest_gdb_dry_run(self):
+        """Test pytest -G with dry-run prints gdb command"""
+        args = make_args(cmd='pytest', board='sandbox', gdbserver='localhost:1234',
+                         gdb=True, dry_run=True)
+
+        # Mock subprocess.run to capture what would be run
+        with terminal.capture() as (out, _):
+            res = control.run_command(args)
+
+        self.assertEqual(0, res)
+        output = out.getvalue()
+        self.assertIn('gdb-multiarch', output)
+        self.assertIn('/tmp/b/sandbox/u-boot', output)
+        self.assertIn('target remote localhost:1234', output)
+
     def test_get_uboot_dir_current(self):
         """Test get_uboot_dir finds U-Boot in current directory"""
         # setUp already created fake U-Boot tree in self.test_dir
