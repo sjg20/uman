@@ -432,7 +432,23 @@ def parse_args(argv=None, prog_name=None):
         prog_name = sys.argv[0] if sys.argv else ''
     invoked_as = os.path.basename(prog_name)
     if invoked_as in get_git_action_names():
-        argv = ['git', invoked_as] + list(argv)
+        # Separate flags (and their values) from positional args
+        # git subparser expects: git [FLAGS] action [ARGS]
+        flags = []
+        args_list = []
+        i = 0
+        while i < len(argv):
+            arg = argv[i]
+            if arg.startswith('-'):
+                flags.append(arg)
+                # If this flag takes a value (not a boolean flag), include the next arg
+                if i + 1 < len(argv) and not argv[i + 1].startswith('-'):
+                    i += 1
+                    flags.append(argv[i])
+            else:
+                args_list.append(arg)
+            i += 1
+        argv = ['git'] + flags + [invoked_as] + args_list
     elif invoked_as == 'cg':
         argv = ['config', '-g'] + list(argv)
 
