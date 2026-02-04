@@ -193,6 +193,7 @@ making it easier to step through commits during development.
 - ``fci`` / ``find-ci`` [N]: Check if commits are in ci/master (default 20)
 - ``fm`` / ``find-master`` [N]: Check if commits are in us/master (default 5)
 - ``fn`` / ``find-next`` [N]: Check if commits are in us/next (default 20)
+- ``fu`` / ``find-upstream`` [-u BRANCH] [N]: Check if commits are in upstream (or specified branch, default 20)
 - ``g`` / ``status``: Show short status (git status -sb) [1]_
 - ``gb`` / ``branch``: List branches (git branch)
 - ``gba`` / ``branch-all``: List all branches including remotes (git branch -a)
@@ -240,6 +241,15 @@ The ``rn`` command behaves differently depending on context:
     # Search specific branch
     uman git gu -u m/master video driver
     uman git gu -u ci/master boot device
+
+    # Check if last 20 commits are in upstream
+    uman git fu
+
+    # Check if last 10 commits are in upstream
+    uman git fu 10
+
+    # Check if last 5 commits are in m/master
+    uman git fu -u m/master 5
 
     # Open interactive rebase editor (to upstream)
     uman git gr

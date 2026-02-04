@@ -794,6 +794,39 @@ def do_fci(args):
     return grep_branch(branch, count, 'ci/master')
 
 
+def do_fu(args):
+    """Check if commits are in upstream or specified branch
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+            args.upstream: Branch to check against (optional, defaults to upstream)
+            args.arg: Number of commits to check (default 20)
+
+    Returns:
+        int: Exit code
+    """
+    # Get target branch from -u flag, or default to upstream
+    if args.upstream:
+        target = args.upstream
+    else:
+        target = get_upstream()
+        if not target:
+            tout.error('Cannot determine upstream branch (use -u to specify)')
+            return 1
+
+    # Get number of commits to check
+    count = int(args.arg) if args.arg else 20
+
+    # Get current branch
+    try:
+        branch = git_output('rev-parse', '--abbrev-ref', 'HEAD')
+    except command.CommandExc:
+        tout.error('Cannot determine current branch')
+        return 1
+
+    return grep_branch(branch, count, target)
+
+
 def search_log(pattern, upstream):
     """Search upstream log for a pattern
 
@@ -1217,6 +1250,7 @@ GIT_ACTIONS = [
     GitAction('fci', 'find-ci', 'Check commits against ci/master', do_fci),
     GitAction('fm', 'find-master', 'Check commits against us/master', do_fm),
     GitAction('fn', 'find-next', 'Check commits against us/next', do_fn),
+    GitAction('fu', 'find-upstream', 'Check commits against upstream', do_fu),
     GitAction('gb', 'branch', 'List branches', do_gb),
     GitAction('gba', 'branch-all', 'List all branches including remotes', do_gba),
     GitAction('gci', 'grep-ci', 'Search ci/master log for pattern', do_gci),
