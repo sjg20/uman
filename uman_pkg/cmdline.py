@@ -330,6 +330,9 @@ def add_git_subparser(subparsers):
     git.add_argument(
         '-a', '--aliases', action='store_true',
         help='Output shell alias definitions for eval')
+    git.add_argument(
+        '-u', '--upstream', metavar='BRANCH',
+        help='Upstream branch to compare against (for gu)')
 
     # Build choices and help from GIT_ACTIONS
     actions = get_git_actions()

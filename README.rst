@@ -202,6 +202,7 @@ making it easier to step through commits during development.
 - ``gm`` / ``grep-master`` PATTERN: Search us/master log for pattern
 - ``gn`` / ``grep-next`` PATTERN: Search us/next log for pattern
 - ``gr`` / ``git-rebase`` [N]: Open interactive rebase editor (to upstream or HEAD~N)
+- ``gu`` / ``grep-upstream`` [-u BRANCH] PATTERN: Search upstream (or specified branch) log for pattern
 - ``cs`` / ``commit-show``: Show the current commit
 - ``ol`` / ``oneline-log`` [N|PATH]: Show oneline log (from upstream, last N commits, or filtered by PATH)
 - ``pe`` / ``peek``: Show last 10 commits (git log --oneline -n10 --decorate)
@@ -232,6 +233,13 @@ The ``rn`` command behaves differently depending on context:
 - With unresolved conflicts: errors out (resolve conflicts first)
 
 **Examples**::
+
+    # Search upstream for pattern (multi-word patterns don't need quotes)
+    uman git gu video console driver
+
+    # Search specific branch
+    uman git gu -u m/master video driver
+    uman git gu -u ci/master boot device
 
     # Open interactive rebase editor (to upstream)
     uman git gr

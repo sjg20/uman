@@ -859,6 +859,40 @@ def do_gci(args):
     return search_log(args.arg, 'ci/master')
 
 
+def do_gu(args):
+    """Search a specified branch log for a pattern
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+            args.upstream: Branch name (optional, defaults to upstream)
+            args.arg: First pattern word
+            args.extra: Additional pattern words
+
+    Returns:
+        int: Exit code
+    """
+    # Get branch from -u flag, or default to upstream
+    if args.upstream:
+        branch = args.upstream
+    else:
+        branch = get_upstream()
+        if not branch:
+            tout.error('Cannot determine upstream branch (use -u to specify)')
+            return 1
+
+    # Build pattern from arg and extra
+    if not args.arg:
+        tout.error('Pattern required: um git gu [-u branch] <pattern>')
+        return 1
+
+    pattern_parts = [args.arg]
+    if args.extra:
+        pattern_parts.extend(args.extra)
+    pattern = ' '.join(pattern_parts)
+
+    return search_log(pattern, branch)
+
+
 def do_eg(args):
     """Search errno.h for error codes
 
@@ -1191,6 +1225,7 @@ GIT_ACTIONS = [
     GitAction('gm', 'grep-master', 'Search us/master log for pattern', do_gm),
     GitAction('gn', 'grep-next', 'Search us/next log for pattern', do_gn),
     GitAction('gr', 'git-rebase', 'Start interactive rebase', do_gr),
+    GitAction('gu', 'grep-upstream', 'Search upstream branch log', do_gu),
     GitAction('cs', 'commit-show', 'Show the current commit', do_cs),
     GitAction('ol', 'oneline-log', 'Show oneline log of commits', do_ol),
     GitAction('pe', 'peek', 'Show last 10 commits', do_pe),

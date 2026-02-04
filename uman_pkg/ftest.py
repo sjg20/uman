@@ -1053,8 +1053,8 @@ class TestGitSubcommand(TestBase):
 
     def test_git_all_actions(self):
         """Test all git actions are valid"""
-        actions = ['et', 'gr', 'ol', 'pm', 'ra', 'rb', 'rd', 're', 'rf', 'rp',
-                   'rn', 'rc', 'rs', 'us']
+        actions = ['et', 'gr', 'gu', 'ol', 'pm', 'ra', 'rb', 'rd', 're', 'rf',
+                   'rp', 'rn', 'rc', 'rs', 'us']
         for action in actions:
             args = cmdline.parse_args(['git', action])
             self.assertEqual(action, args.action)
@@ -1064,6 +1064,7 @@ class TestGitSubcommand(TestBase):
         full_names = {
             'edit-todo': 'et',
             'git-rebase': 'gr',
+            'grep-upstream': 'gu',
             'oneline-log': 'ol',
             'patch-merge': 'pm',
             'rebase-abort': 'ra',
