@@ -688,6 +688,9 @@ hooks to PATH.
     # Dry run to see command and environment
     uman --dry-run py -B qemu-riscv64
 
+    # Set environment variables for build (e.g. firmware binaries)
+    uman py -B qemu_arm64 -b -e BL31=/path/bl31.bin -e TEE=/path/tee.bin
+
     # Pass extra arguments to pytest (after --)
     uman py -B sandbox TestFsBasic -- --fs-type ext4
 
@@ -728,6 +731,8 @@ hooks to PATH.
 - ``--pollute TEST``: Find which test pollutes TEST
 - ``-o, --output-dir DIR``: Override build directory (use with -b)
 - ``--gdbserver CHANNEL``: Run sandbox under gdbserver (e.g., localhost:5555)
+- ``-e, --env KEY=VALUE``: Set environment variable for build (use with -b;
+  repeatable)
 
 **Running C Tests Directly**:
 
@@ -972,6 +977,7 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
 - ``-T, --trace``: Enable function tracing (FTRACE=1, adds CONFIG_TRACE and
   CONFIG_TRACE_EARLY)
 - ``--no-trace-early``: Disable TRACE_EARLY when using -T
+- ``-e, --env KEY=VALUE``: Set environment variable for build (repeatable)
 
 Setup Subcommand
 ----------------

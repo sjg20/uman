@@ -286,6 +286,27 @@ class TestUmanCmdline(TestBase):
         self.assertEqual(args.cmd, 'pytest')
         self.assertEqual(args.board, 'sandbox')
 
+    def test_env_flag_parsing(self):
+        """Test that -e flag parses environment variables"""
+        args = cmdline.parse_args(
+            ['py', '-B', 'sandbox', '-b', '-e', 'BL31=/path/bl31.bin'])
+        self.assertEqual(['BL31=/path/bl31.bin'], args.env)
+
+        # Multiple -e flags
+        args = cmdline.parse_args(
+            ['py', '-B', 'sandbox', '-b',
+             '-e', 'BL31=/a', '-e', 'TEE=/b'])
+        self.assertEqual(['BL31=/a', 'TEE=/b'], args.env)
+
+        # No -e flag
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertIsNone(args.env)
+
+        # Also works with build subcommand
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-e', 'BL31=/path/bl31.bin'])
+        self.assertEqual(['BL31=/path/bl31.bin'], args.env)
+
     def test_build_subcommand_parsing(self):
         """Test that build subcommand parses correctly"""
         args = cmdline.parse_args(['build', 'sandbox'])

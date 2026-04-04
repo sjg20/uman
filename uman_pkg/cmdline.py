@@ -265,6 +265,9 @@ def add_build_opts(parser, skip_short=None):
     group.add_argument(
         '--no-trace-early', action='store_true', dest='no_trace_early',
         help='Disable TRACE_EARLY when using -T (use with -b)')
+    group.add_argument(
+        '-e', '--env', action='append', metavar='KEY=VALUE', dest='env',
+        help='Set environment variable for build (use with -b; repeatable)')
 
 
 def add_pytest_subparser(subparsers):
@@ -368,6 +371,9 @@ def add_build_subparser(subparsers):
                      help='Enable function tracing (FTRACE=1)')
     bld.add_argument('--no-trace-early', action='store_true', dest='no_trace_early',
                      help='Disable TRACE_EARLY when using -T')
+    bld.add_argument('-e', '--env', action='append', metavar='KEY=VALUE',
+                     dest='env',
+                     help='Set environment variable for build (repeatable)')
     bld.add_argument('--bisect', action='store_true',
                      help='Bisect to find first failing commit')
     bld.add_argument('--gprof', action='store_true',

@@ -429,8 +429,12 @@ def run(args):
     bm_args = get_buildman_args(args, board, build_dir)
 
     env = None
-    if args.trace or args.gprof or args.werror:
+    if args.env or args.trace or args.gprof or args.werror:
         env = os.environ.copy()
+        if args.env:
+            for item in args.env:
+                key, _, val = item.partition('=')
+                env[key] = val
         if args.trace:
             bm_args.extend(['-a', 'TRACE'])
             if not args.no_trace_early:

@@ -1515,6 +1515,10 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
                 adjust_cfg.append(cfg)
 
         pytest_vars = pytest_env(args.board)
+        if args.env:
+            for item in args.env:
+                key, _, val = item.partition('=')
+                pytest_vars[key] = val
         if not build_mod.build_board(
                 args.board, args.dry_run, args.lto,
                 adjust_cfg=adjust_cfg,
@@ -1526,6 +1530,10 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
         args.build = False  # Don't build again in pytest
     else:
         pytest_vars = pytest_env(args.board)
+        if args.env:
+            for item in args.env:
+                key, _, val = item.partition('=')
+                pytest_vars[key] = val
 
     # Show -G command hint when using -g (not in dry-run mode)
     if args.gdb_phase and not args.gdb and not args.dry_run:
