@@ -3964,6 +3964,63 @@ class TestGitLabParser(TestBase):
         self.assertEqual(parser1.boards, parser2.boards)
         self.assertEqual(parser1.job_names, parser2.job_names)
 
+    def test_find_gitlab_ci_file_cwd(self):
+        """Test that find_gitlab_ci_file() checks the current directory"""
+        old_cwd = os.getcwd()
+        orig_usrc = os.environ.get('USRC')
+        try:
+            if 'USRC' in os.environ:
+                del os.environ['USRC']
+            os.chdir(self.test_dir)
+
+            # Create a fake .gitlab-ci.yml in the current directory
+            ci_file = os.path.join(self.test_dir, '.gitlab-ci.yml')
+            with open(ci_file, 'w', encoding='utf-8') as fout:
+                fout.write('test:\n  script: echo hello\n')
+
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertEqual(ci_file, result)
+        finally:
+            os.chdir(old_cwd)
+            if orig_usrc is not None:
+                os.environ['USRC'] = orig_usrc
+            elif 'USRC' in os.environ:
+                del os.environ['USRC']
+
+    def test_find_gitlab_ci_file_usrc(self):
+        """Test that find_gitlab_ci_file() checks $USRC"""
+        old_cwd = os.getcwd()
+        orig_usrc = os.environ.get('USRC')
+        try:
+            # cd somewhere with no .gitlab-ci.yml nearby
+            empty_dir = os.path.join(self.test_dir, 'empty')
+            os.makedirs(empty_dir)
+            os.chdir(empty_dir)
+
+            # Create a fake .gitlab-ci.yml in a separate directory
+            src_dir = os.path.join(self.test_dir, 'src')
+            os.makedirs(src_dir)
+            ci_file = os.path.join(src_dir, '.gitlab-ci.yml')
+            with open(ci_file, 'w', encoding='utf-8') as fout:
+                fout.write('test:\n  script: echo hello\n')
+
+            # Without USRC, should not find it
+            if 'USRC' in os.environ:
+                del os.environ['USRC']
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertIsNone(result)
+
+            # With USRC pointing to src_dir, should find it
+            os.environ['USRC'] = src_dir
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertEqual(ci_file, result)
+        finally:
+            os.chdir(old_cwd)
+            if orig_usrc is not None:
+                os.environ['USRC'] = orig_usrc
+            elif 'USRC' in os.environ:
+                del os.environ['USRC']
+
 
 class TestUmanMergeRequest(TestBase):
     """Tests for merge request functionality"""

@@ -27,10 +27,16 @@ def find_gitlab_ci_file():
     """
     # Try common locations relative to current directory
     candidates = [
+        '.gitlab-ci.yml',
         '../.gitlab-ci.yml',
         '../../.gitlab-ci.yml',
         Path.home() / 'u/.gitlab-ci.yml'
     ]
+
+    # Also check USRC environment variable
+    usrc = os.environ.get('USRC')
+    if usrc:
+        candidates.insert(0, os.path.join(usrc, '.gitlab-ci.yml'))
 
     for candidate in candidates:
         path = Path(candidate).resolve()
