@@ -307,6 +307,15 @@ class TestUmanCmdline(TestBase):
             ['build', 'sandbox', '-e', 'BL31=/path/bl31.bin'])
         self.assertEqual(['BL31=/path/bl31.bin'], args.env)
 
+    def test_id_flag_parsing(self):
+        """Test that --id flag parses TEST_PY_ID"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox', '--id', 'na'])
+        self.assertEqual('na', args.test_py_id)
+
+        # No --id flag
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertIsNone(args.test_py_id)
+
     def test_build_subcommand_parsing(self):
         """Test that build subcommand parses correctly"""
         args = cmdline.parse_args(['build', 'sandbox'])
@@ -7002,6 +7011,36 @@ class TestPytestHooks(TestBase):
 
         self.assertEqual('qemu', result['console_impl'])
         self.assertEqual('qemu-system-arm', result['qemu_binary'])
+
+
+class TestPytestId(TestBase):
+    """Tests for --id flag and PYTHONPATH setup"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.WARNING)
+
+    @mock.patch('uman_pkg.cmdpy.settings')
+    def test_pytest_env_id_pythonpath(self, mock_settings):
+        """Test that pytest_env() adds hooks to PYTHONPATH when id is set"""
+        mock_settings.get.return_value = None
+
+        # Create the hooks directory
+        hooks_py = os.path.join(self.test_dir, 'test/hooks/py/travis-ci')
+        os.makedirs(hooks_py)
+        # Also need test/hooks/bin for the PATH setup
+        os.makedirs(os.path.join(self.test_dir, 'test/hooks/bin/travis-ci'))
+
+        with mock.patch.object(cmdpy, 'get_uboot_dir',
+                               return_value=self.test_dir):
+            # Without id, no PYTHONPATH
+            env = cmdpy.pytest_env('sandbox')
+            self.assertNotIn('PYTHONPATH', env)
+
+            # With id, hooks dir added to PYTHONPATH
+            env = cmdpy.pytest_env('sandbox', test_py_id='na')
+            self.assertIn('PYTHONPATH', env)
+            self.assertIn(hooks_py, env['PYTHONPATH'])
 
 
 class TestDockerTest(TestBase):

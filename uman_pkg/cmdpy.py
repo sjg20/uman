@@ -142,11 +142,12 @@ def ensure_hooks_host(hooks_bin):
         tout.notice(f'Created symlink {host_dir} -> {HOOKS_FALLBACK}')
 
 
-def pytest_env(board):
+def pytest_env(board, test_py_id=None):
     """Set up environment variables for pytest testing
 
     Args:
         board (str): Board name
+        test_py_id (str or None): TEST_PY_ID override, or None for default
 
     Returns:
         dict: Environment variables that were set (not the full environment)
@@ -164,6 +165,17 @@ def pytest_env(board):
 
     # Local hooks from U-Boot tree take precedence
     uboot_dir = get_uboot_dir()
+
+    # When --id is specified, add hooks pythonpath so boardenv files are found
+    if test_py_id and uboot_dir:
+        hooks_py = os.path.join(uboot_dir, 'test/hooks/py/travis-ci')
+        if os.path.exists(hooks_py):
+            current = os.environ.get('PYTHONPATH', '')
+            if current:
+                env['PYTHONPATH'] = f'{hooks_py}:{current}'
+            else:
+                env['PYTHONPATH'] = hooks_py
+
     if uboot_dir:
         local_hooks = os.path.join(uboot_dir, 'test/hooks/bin')
         if os.path.exists(local_hooks):
@@ -494,7 +506,7 @@ def build_pytest_cmd(args):
 
     cmd.append('--buildman')
 
-    board_id = get_board_test_id(args.board)
+    board_id = args.test_py_id or get_board_test_id(args.board)
     cmd.extend(['--id', board_id])
 
     # Build test spec from user args and gitlab defaults
@@ -1514,7 +1526,7 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
             if cfg not in adjust_cfg:
                 adjust_cfg.append(cfg)
 
-        pytest_vars = pytest_env(args.board)
+        pytest_vars = pytest_env(args.board, args.test_py_id)
         if args.env:
             for item in args.env:
                 key, _, val = item.partition('=')
@@ -1529,7 +1541,7 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
             return 1
         args.build = False  # Don't build again in pytest
     else:
-        pytest_vars = pytest_env(args.board)
+        pytest_vars = pytest_env(args.board, args.test_py_id)
         if args.env:
             for item in args.env:
                 key, _, val = item.partition('=')

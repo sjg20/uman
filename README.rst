@@ -691,6 +691,9 @@ hooks to PATH.
     # Set environment variables for build (e.g. firmware binaries)
     uman py -B qemu_arm64 -b -e BL31=/path/bl31.bin -e TEE=/path/tee.bin
 
+    # Override TEST_PY_ID (adds hooks to PYTHONPATH for boardenv files)
+    uman py -B qemu_arm64 -b --id qemu test_fw_handoff
+
     # Pass extra arguments to pytest (after --)
     uman py -B sandbox TestFsBasic -- --fs-type ext4
 
@@ -733,6 +736,8 @@ hooks to PATH.
 - ``--gdbserver CHANNEL``: Run sandbox under gdbserver (e.g., localhost:5555)
 - ``-e, --env KEY=VALUE``: Set environment variable for build (use with -b;
   repeatable)
+- ``--id ID``: Set TEST_PY_ID and add hooks to PYTHONPATH (default:
+  auto-detect from .gitlab-ci.yml)
 
 **Running C Tests Directly**:
 

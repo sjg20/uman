@@ -324,6 +324,10 @@ def add_pytest_subparser(subparsers):
     pyt.add_argument(
         '--gdbserver', metavar='CHANNEL', dest='gdbserver',
         help='Run sandbox under gdbserver (e.g., localhost:5555)')
+    pyt.add_argument(
+        '--id', metavar='ID', dest='test_py_id',
+        help='Set TEST_PY_ID and add hooks to PYTHONPATH '
+        '(default: auto-detect from .gitlab-ci.yml)')
     add_build_opts(pyt)
     # extra_args is set by parse_args() when '--' is present
     pyt.set_defaults(extra_args=[])
