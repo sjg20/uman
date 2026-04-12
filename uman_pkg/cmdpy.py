@@ -1093,7 +1093,13 @@ def gdb_monitor(gdb_cmd, channel):
                     break
                 if not data:
                     break
-                os.write(master_fd, data)
+                # Translate Ctrl-C to SIGINT for gdb's process group,
+                # since raw mode disables ISIG on both sides of the pty
+                if b'\x03' in data:
+                    os.killpg(proc.pid, signal.SIGINT)
+                    data = data.replace(b'\x03', b'')
+                if data:
+                    os.write(master_fd, data)
 
             if master_fd in rlist:
                 try:
