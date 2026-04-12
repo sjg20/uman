@@ -544,6 +544,8 @@ def build_pytest_cmd(args):
         'localhost:1234' if args.gdb_phase else None)
     if gdb_channel:
         cmd.extend(['--gdbserver', gdb_channel])
+    if args.why_skip:
+        cmd.append('-rs')
     if args.exitfirst:
         cmd.append('-x')
     if not args.flattree_too and has_no_full():

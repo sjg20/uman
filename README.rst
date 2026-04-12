@@ -738,6 +738,7 @@ hooks to PATH.
   repeatable)
 - ``--id ID``: Set TEST_PY_ID and add hooks to PYTHONPATH (default:
   auto-detect from .gitlab-ci.yml)
+- ``--why-skip``: Show reasons for skipped tests (passes -rs to pytest)
 
 **Running C Tests Directly**:
 

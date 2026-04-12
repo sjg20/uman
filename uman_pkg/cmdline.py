@@ -328,6 +328,9 @@ def add_pytest_subparser(subparsers):
         '--id', metavar='ID', dest='test_py_id',
         help='Set TEST_PY_ID and add hooks to PYTHONPATH '
         '(default: auto-detect from .gitlab-ci.yml)')
+    pyt.add_argument(
+        '--why-skip', action='store_true',
+        help='Show reasons for skipped tests')
     add_build_opts(pyt)
     # extra_args is set by parse_args() when '--' is present
     pyt.set_defaults(extra_args=[])

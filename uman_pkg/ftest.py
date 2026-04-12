@@ -316,6 +316,14 @@ class TestUmanCmdline(TestBase):
         args = cmdline.parse_args(['py', '-B', 'sandbox'])
         self.assertIsNone(args.test_py_id)
 
+    def test_why_skip_flag_parsing(self):
+        """Test that --why-skip flag is parsed"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox', '--why-skip'])
+        self.assertTrue(args.why_skip)
+
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertFalse(args.why_skip)
+
     def test_build_subcommand_parsing(self):
         """Test that build subcommand parses correctly"""
         args = cmdline.parse_args(['build', 'sandbox'])
