@@ -1196,9 +1196,14 @@ def collect_tests(args):
     if not args.flattree_too and has_no_full():
         cmd.append('--no-full')
 
+    spec_parts = []
     if args.test_spec:
-        spec = ' '.join(args.test_spec)
-        cmd.extend(['-k', spec])
+        spec_parts.append(f"({' '.join(args.test_spec)})")
+    gitlab_spec = get_board_test_spec(args.board)
+    if gitlab_spec:
+        spec_parts.append(f'({gitlab_spec})')
+    if spec_parts:
+        cmd.extend(['-k', ' and '.join(spec_parts)])
 
     result = command.run_pipe([cmd], capture=True, capture_stderr=True,
                               raise_on_error=False)
@@ -1291,7 +1296,13 @@ def pollute_run(tests, target, args, env):
     # Convert node IDs to test names and join with "or" for -k
     all_tests = tests + [target]
     names = [node_to_name(t) for t in all_tests]
-    spec = ' or '.join(names)
+    spec_parts = [f"({' or '.join(names)})"]
+    if args.test_spec:
+        spec_parts.append(f"({' '.join(args.test_spec)})")
+    gitlab_spec = get_board_test_spec(args.board)
+    if gitlab_spec:
+        spec_parts.append(f'({gitlab_spec})')
+    spec = ' and '.join(spec_parts)
 
     cmd = ['./test/py/test.py', '-B', args.board, '--build-dir', build_dir,
            '--buildman', '--id', 'na', '-q', '-k', spec]
@@ -1342,17 +1353,16 @@ def do_pollute(args):
     if uboot_dir != os.getcwd():
         os.chdir(uboot_dir)
 
-    # Build to the pollute directory if requested
-    if args.build:
-        base_dir = settings.get('build_dir', '/tmp/b')
-        build_dir = f'{base_dir}/{args.board}-pollute'
-        tout.notice(f'Building to {build_dir}...')
-        cmd = [build_mod.get_buildman()] + build_mod.base_bm_args(
-            args.board, build_dir, args.lto)
-        result = exec_cmd(cmd, args.dry_run, capture=False)
-        if result and result.return_code != 0:
-            tout.error('Build failed')
-            return 1
+    # Ensure the pollute build is current (incremental, fast for no-op)
+    base_dir = settings.get('build_dir', '/tmp/b')
+    build_dir = args.output_dir or f'{base_dir}/{args.board}-pollute'
+    tout.notice(f'Building to {build_dir}...')
+    cmd = [build_mod.get_buildman()] + build_mod.base_bm_args(
+        args.board, build_dir, args.lto)
+    result = exec_cmd(cmd, args.dry_run, capture=False)
+    if result and result.return_code != 0:
+        tout.error('Build failed')
+        return 1
 
     tout.notice('Collecting tests...')
     tests = collect_tests(args)

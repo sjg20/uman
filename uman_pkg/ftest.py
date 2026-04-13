@@ -6799,7 +6799,8 @@ test_fs.py::TestFs::test_ext4
 
         with mock.patch('subprocess.Popen', mock_popen):
             args = argparse.Namespace(board='sandbox', build_dir=None,
-                                      lto=False, flattree_too=False, output_dir=None)
+                                      lto=False, test_spec=None,
+                                      flattree_too=False, output_dir=None)
             env = {}
             tests = ['tests/test_ut.py::test_ut[ut_dm_foo]',
                      'tests/test_ut.py::test_ut[ut_dm_bar]']
@@ -6810,7 +6811,7 @@ test_fs.py::TestFs::test_ext4
         self.assertIn('-k', captured_cmd)
         idx = captured_cmd.index('-k')
         spec = captured_cmd[idx + 1]
-        self.assertEqual('ut_dm_foo or ut_dm_bar or ut_dm_target', spec)
+        self.assertEqual('(ut_dm_foo or ut_dm_bar or ut_dm_target)', spec)
 
     def test_node_to_name(self):
         """Test node_to_name extracts test name from node ID"""
@@ -6837,7 +6838,8 @@ test_fs.py::TestFs::test_ext4
         with mock.patch('subprocess.Popen', mock_popen):
             with mock.patch.object(settings, 'get', return_value='/tmp/b'):
                 args = argparse.Namespace(board='sandbox', build_dir=None,
-                                          lto=False, flattree_too=False, output_dir=None)
+                                          lto=False, test_spec=None,
+                                          flattree_too=False, output_dir=None)
                 cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertIn('--build-dir', captured_cmd)
@@ -6898,7 +6900,8 @@ test_fs.py::TestFs::test_ext4
         with mock.patch('subprocess.Popen', mock_popen):
             with mock.patch('uman_pkg.cmdpy.has_no_full', return_value=True):
                 args = argparse.Namespace(board='sandbox', build_dir=None,
-                                          lto=False, flattree_too=False, output_dir=None)
+                                          lto=False, test_spec=None,
+                                          flattree_too=False, output_dir=None)
                 cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertIn('--no-full', captured_cmd)
@@ -6916,7 +6919,8 @@ test_fs.py::TestFs::test_ext4
 
         with mock.patch('subprocess.Popen', mock_popen):
             args = argparse.Namespace(board='sandbox', build_dir=None,
-                                      lto=False, flattree_too=True, output_dir=None)
+                                      lto=False, test_spec=None,
+                                      flattree_too=True, output_dir=None)
             cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertNotIn('--no-full', captured_cmd)
