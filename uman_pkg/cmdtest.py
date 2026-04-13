@@ -45,7 +45,7 @@ RE_RESULT = re.compile(r'Result:\s*(PASS|FAIL|SKIP):?\s+(\S+)')
 RE_SUMMARY = re.compile(r'Tests run:\s*(\d+),.*failures:\s*(\d+)')
 RE_TEST_FAILED = re.compile(r"Test '.+' failed \d+ times")
 RE_LEAK = re.compile(r'Leak:\s+(\d+)\s+alloc')
-RE_LEAK_DETAIL = re.compile(r'\s+[0-9a-f]+\s+([0-9a-f]+)\s+(.*)')
+RE_LEAK_DETAIL = re.compile(r'\s+[0-9a-f]+\s+([0-9a-f]+)\s+(\S+:\d+.*)')
 
 # Unit test flags from include/test/test.h
 UTF_FLAT_TREE = 0x08

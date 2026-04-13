@@ -5855,6 +5855,36 @@ Result: SKIP dm_test_fourth
         self.assertEqual(1, res.failed)
         self.assertEqual(0, res.skipped)
 
+    def test_parse_results_leak_detail(self):
+        """Test parse_results counts real leak-detail lines"""
+        # Real leak detail: <addr> <size-hex> <caller>
+        output = (
+            'Test: my_test\n'
+            'Leak: 1 alloc\n'
+            '  169f5668  1000a0  sandbox_mmc_probe:194\n'
+            'Result: PASS my_test\n'
+        )
+        res = cmdtest.parse_results(output)
+        self.assertEqual(1, res.leaked)
+        self.assertEqual(0x1000a0, res.leak_bytes)
+
+    def test_parse_results_leak_detail_false_match(self):
+        """Test parse_results ignores non-leak lines that look hex-ish"""
+        # Lines from rsvmem, GPT partition dumps, host info -- these
+        # previously matched the regex and inflated the leak total
+        output = (
+            'Test: fdt_rsvmem\n'
+            '      0    0000000000074656    0000000000000009\n'
+            '      1    0000000000001234    0000000000005678\n'
+            '165  fd 42 d1 6a 20 30 27 98\n'
+            '  3x 24.2K  1  Basic data\n'
+            '  2x 32.3K  512 test2  /tmp/b/x/2MB.ext2.img\n'
+            'Result: PASS fdt_rsvmem\n'
+        )
+        res = cmdtest.parse_results(output)
+        self.assertEqual(0, res.leaked)
+        self.assertEqual(0, res.leak_bytes)
+
     def test_parse_legacy_results_show_results(self):
         """Test parse_legacy_results with show_results flag"""
         output = '''
