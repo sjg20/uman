@@ -1004,6 +1004,7 @@ various architectures::
     uman setup opensbi
     uman setup tfa
     uman setup xtensa
+    uman setup adi-ldr
 
     # Create git action symlinks in ~/bin
     uman setup aliases
@@ -1036,6 +1037,10 @@ various architectures::
   ``aarch64-linux-gnu-`` cross-compiler.
 - ``xtensa``: Download Xtensa dc233c toolchain from foss-xtensa releases and
   configure ``~/.buildman``.
+- ``adi-ldr``: Clone and build the ``ldr`` tool for Analog Devices boards
+  using meson inside a Python venv, and create ``arm-linux-gnueabi-ldr`` and
+  ``aarch64-linux-ldr`` symlinks so it matches ``$(CROSS_COMPILE)`` on
+  supported platforms. Add the install dir to ``PATH`` afterwards.
 
 **Installed locations** (configurable in ``~/.uman``):
 
@@ -1043,6 +1048,8 @@ various architectures::
   ``fw_dynamic_rv32.bin`` (32-bit)
 - TF-A: ``~/dev/blobs/tfa/bl1.bin``, ``fip.bin``
 - Xtensa: ``~/dev/blobs/xtensa/2020.07/xtensa-dc233c-elf/``
+- adi-ldr: ``~/dev/adi-adsp-ldr/build/ldr`` (with prefixed symlinks in
+  ``~/dev/adi-adsp-ldr/``)
 
 .. _Configuration:
 

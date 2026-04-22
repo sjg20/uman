@@ -26,6 +26,7 @@ from uman_pkg import util
 SETUP_COMPONENTS = {
     'aliases': 'Create symlinks for git action commands',
     'remote': 'Deploy uman to a remote machine via SSH',
+    'adi-ldr': 'ldr tool for Analog Devices boards',
     'efi': 'QEMU EFI firmware for ARM, ARM64, RISC-V and x86',
     'gcc': 'GCC cross-compiler and build dependencies',
     'qemu': 'QEMU emulators for all architectures',
@@ -648,6 +649,86 @@ def setup_xtensa(blobs_dir, args):
     return 0
 
 
+# ldr tool for Analog Devices boards
+ADI_LDR_REPO = 'https://github.com/analogdevicesinc/adsp-ldr.git'
+ADI_LDR_VER = 'v1.0.2'
+
+# CROSS_COMPILE prefixes used by supported ADI platforms
+ADI_LDR_PREFIXES = ('arm-linux-gnueabi-ldr', 'aarch64-linux-ldr')
+
+
+def setup_adi_ldr(args):
+    """Clone and build the ldr tool for Analog Devices boards
+
+    Clones adsp-ldr to ~/dev/adi-adsp-ldr, builds it with meson inside
+    a Python venv and creates prefixed symlinks that match
+    $(CROSS_COMPILE) on supported platforms. Output is logged to
+    ~/dev/adi-adsp-ldr/build.log
+
+    Args:
+        args (argparse.Namespace): Command line arguments
+
+    Returns:
+        int: Exit code (0 for success, non-zero for failure)
+    """
+    ldr_dir = os.path.expanduser('~/dev/adi-adsp-ldr')
+    build_dir = os.path.join(ldr_dir, 'build')
+    log_path = os.path.join(ldr_dir, 'build.log')
+
+    if os.path.exists(os.path.join(build_dir, 'ldr')) and not args.force:
+        tout.notice(f'ldr already built: {build_dir}/ldr')
+        tout.notice('Use --force to rebuild')
+        return 0
+
+    if args.dry_run:
+        tout.notice(f'Would clone adsp-ldr {ADI_LDR_VER} to {ldr_dir}'
+                    ' and build')
+        return 0
+
+    os.makedirs(os.path.dirname(ldr_dir), exist_ok=True)
+    tmp_log = os.path.join(os.path.dirname(ldr_dir), 'adi-ldr-build.log')
+    venv = os.path.join(ldr_dir, 'venv', 'bin')
+
+    # Build the list of steps to run, then execute under one log handle
+    steps = []
+    if not os.path.isdir(os.path.join(ldr_dir, '.git')):
+        steps.append((['git', 'clone', '--depth=1', '-b', ADI_LDR_VER,
+                       ADI_LDR_REPO, ldr_dir], None, 'git clone'))
+    if not os.path.exists(f'{venv}/meson'):
+        steps.append((['python3', '-m', 'venv',
+                       os.path.dirname(venv)], None, 'python -m venv'))
+        steps.append(([f'{venv}/pip', 'install', 'meson'], None,
+                      'pip install meson'))
+    if not os.path.exists(os.path.join(build_dir, 'build.ninja')):
+        steps.append(([f'{venv}/meson', 'setup', 'build'], ldr_dir,
+                      'meson setup'))
+    steps.append(([f'{venv}/meson', 'compile'], build_dir, 'meson compile'))
+
+    # Log to a temp file until ldr_dir exists from the clone, then move
+    failed = False
+    with open(tmp_log, 'w', encoding='utf-8') as log:
+        for cmd, cwd, desc in steps:
+            tout.progress(desc)
+            if not run_logged(cmd, log, desc, cwd=cwd):
+                failed = True
+                break
+    if os.path.isdir(ldr_dir):
+        shutil.move(tmp_log, log_path)
+    if failed:
+        return 1
+
+    for name in ADI_LDR_PREFIXES:
+        link = os.path.join(ldr_dir, name)
+        if os.path.exists(link) or os.path.islink(link):
+            os.remove(link)
+        os.symlink('build/ldr', link)
+
+    tout.clear_progress()
+    tout.notice(f'ldr built: {build_dir}/ldr (log: {log_path})')
+    tout.notice(f'Add to PATH: {ldr_dir}')
+    return 0
+
+
 RSYNC_EXCLUDES = [
     '.git/', '__pycache__/', '*.pyc', '*.pyo', '.pytest_cache/',
     '.benchmarks/', '.claude/', '.hypothesis/', 'mmc*.img', 'spi.bin', 'um',
@@ -750,6 +831,7 @@ def do_setup(args):
     # Dispatch table for component setup functions
     setup_funcs = {
         'aliases': lambda: setup_aliases(args),
+        'adi-ldr': lambda: setup_adi_ldr(args),
         'efi': lambda: setup_efi(args),
         'gcc': lambda: setup_gcc(args),
         'qemu': lambda: setup_qemu(args),
