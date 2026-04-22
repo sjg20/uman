@@ -1411,7 +1411,38 @@ def do_pollute(args):
         return 1
     tout.notice('  FAIL (confirmed)')
 
-    # Binary search
+    if args.pollute_algo == 'linear':
+        polluters = pollute_linear(candidates, target, args, env)
+    elif args.pollute_algo == 'ddmin':
+        polluters = pollute_ddmin(candidates, target, args, env)
+    else:
+        polluters = pollute_bisect(candidates, target, args, env)
+    if polluters is None:
+        return 1
+
+    target_name = node_to_name(target)
+    red = '\033[31m'
+    reset = '\033[0m'
+    names = [node_to_name(p) for p in polluters]
+    if len(polluters) == 1:
+        tout.notice(
+            f'\nFound: {target_name} polluted by {red}{names[0]}{reset}')
+    else:
+        tout.notice(
+            f'\nFound: {target_name} polluted by {len(polluters)} tests:')
+        for name in names:
+            tout.notice(f'  {red}{name}{reset}')
+    spec = ' or '.join(names + [node_to_name(target)])
+    tout.notice(f'  Run: uman py -B {args.board} "{spec}"')
+    return 0
+
+
+def pollute_bisect(candidates, target, args, env):
+    """Binary-search for a single polluter
+
+    Returns:
+        list or None: List of polluters (one test), or None on failure
+    """
     steps = math.ceil(math.log2(len(candidates))) if candidates else 0
     step = 0
 
@@ -1431,7 +1462,7 @@ def do_pollute(args):
 
     if not candidates:
         tout.error('No polluter found - may need multiple tests to trigger')
-        return 1
+        return None
 
     polluter = candidates[0]
 
@@ -1439,18 +1470,101 @@ def do_pollute(args):
     print(f'  Verifying {node_to_name(polluter)}...')
     if pollute_run([polluter], target, args, env):
         tout.notice('  -> FAIL (confirmed)')
-    else:
-        tout.notice('  -> PASS (inconclusive - may need multiple tests)')
-        return 1
-
-    polluter_name = node_to_name(polluter)
-    target_name = node_to_name(target)
-    red = '\033[31m'
-    reset = '\033[0m'
+        return [polluter]
     tout.notice(
-        f'\nFound: {target_name} polluted by {red}{polluter_name}{reset}')
-    tout.notice(f'  Run: uman py -B {args.board} "{polluter} or {target}"')
-    return 0
+        '  -> PASS (inconclusive - try --pollute-algo linear for '
+        'multi-test pollution)')
+    return None
+
+
+def pollute_linear(candidates, target, args, env):
+    """Grow the suffix of candidates until the target fails
+
+    Starts with just the target, then adds candidates[-1], then
+    candidates[-2:], etc. The first suffix that reproduces the
+    failure is the minimal set of prior tests needed.
+
+    Returns:
+        list or None: List of polluters, or None on failure
+    """
+    tout.notice(
+        f'Linear search: growing suffix from target ({len(candidates)} '
+        f'candidates)...')
+    for k in range(1, len(candidates) + 1):
+        suffix = candidates[-k:]
+        print(f'  Step {k}/{len(candidates)}: {k} tests...')
+        if pollute_run(suffix, target, args, env):
+            tout.notice(f'  -> FAIL (minimal window: {k} tests)')
+            return suffix
+        tout.notice('  -> PASS')
+    tout.error('No suffix reproduces the failure')
+    return None
+
+
+def pollute_ddmin(candidates, target, args, env):
+    """Delta debugging to find a 1-minimal subset of polluters
+
+    Finds a subset S of `candidates` such that S + target fails, and
+    removing any single test from S makes it pass. This is the
+    minimal set of tests that together cause the pollution.
+
+    Returns:
+        list or None: 1-minimal subset, or None if nothing reproduces
+    """
+    cur = list(candidates)
+    n = 2
+    run = 0
+
+    tout.notice(f'Delta debugging {len(cur)} candidates...')
+    while len(cur) >= 2:
+        chunk_size = max(len(cur) // n, 1)
+        chunks = [cur[i:i + chunk_size]
+                  for i in range(0, len(cur), chunk_size)]
+
+        # Phase 1: try each chunk alone (reduces fast if it fails)
+        reduced = False
+        for i, chunk in enumerate(chunks):
+            if len(chunk) == len(cur):
+                continue
+            run += 1
+            print(f'  Run {run}: chunk {i + 1}/{len(chunks)} '
+                  f'({len(chunk)} tests)...')
+            if pollute_run(chunk, target, args, env):
+                tout.notice(f'  -> FAIL (reduced to {len(chunk)})')
+                cur = chunk
+                n = 2
+                reduced = True
+                break
+            tout.notice('  -> PASS')
+        if reduced:
+            continue
+
+        # Phase 2: try each complement (chunk removed)
+        for i, chunk in enumerate(chunks):
+            complement = [t for t in cur if t not in chunk]
+            if not complement or len(complement) == len(cur):
+                continue
+            run += 1
+            print(f'  Run {run}: without chunk {i + 1}/{len(chunks)} '
+                  f'({len(complement)} tests)...')
+            if pollute_run(complement, target, args, env):
+                tout.notice(
+                    f'  -> FAIL (removed chunk, reduced to {len(complement)})')
+                cur = complement
+                n = max(n - 1, 2)
+                reduced = True
+                break
+            tout.notice('  -> PASS')
+        if reduced:
+            continue
+
+        # No reduction possible at this granularity; subdivide further
+        if n >= len(cur):
+            break
+        n = min(n * 2, len(cur))
+
+    tout.notice(f'  1-minimal subset: {len(cur)} tests')
+    return cur
 
 
 def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-branches

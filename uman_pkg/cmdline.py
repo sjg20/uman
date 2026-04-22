@@ -322,6 +322,12 @@ def add_pytest_subparser(subparsers):
         '--pollute', metavar='TEST',
         help='Find which test pollutes TEST (causes it to fail)')
     pyt.add_argument(
+        '--pollute-algo', choices=['bisect', 'linear', 'ddmin'],
+        default='bisect',
+        help='Pollution search algorithm: bisect (fast, single '
+             'polluter), linear (grow suffix from target), or ddmin '
+             '(delta debugging, finds minimal subset - slowest)')
+    pyt.add_argument(
         '--gdbserver', metavar='CHANNEL', dest='gdbserver',
         help='Run sandbox under gdbserver (e.g., localhost:5555)')
     pyt.add_argument(
