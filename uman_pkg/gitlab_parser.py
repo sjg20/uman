@@ -64,6 +64,7 @@ class GitLabCIParser:
         self._roles = []
         self._boards = []
         self._job_names = []
+        self._sage_names = []
         self._parse_file()
 
     def _parse_file(self):
@@ -75,13 +76,32 @@ class GitLabCIParser:
         boards = set()
         job_names = set()
 
-        # Read file content once
-        with open(self._filepath, 'r', encoding='utf-8') as f:
+        self._extract(self._filepath, roles, boards, job_names)
+
+        # Also parse the sage-lab include if present, to discover sage jobs
+        sage_names = set()
+        sage_path = os.path.join(os.path.dirname(self._filepath),
+                                 '.gitlab-ci-sage-lab.yml')
+        if os.path.exists(sage_path):
+            self._extract_sage(sage_path, sage_names)
+
+        # Store sorted lists
+        self._roles = sorted(list(roles))
+        self._boards = sorted(list(boards))
+        self._job_names = sorted(list(job_names))
+        self._sage_names = sorted(list(sage_names))
+
+    @staticmethod
+    def _extract(path, roles, boards, job_names):
+        """Extract ROLE, TEST_PY_BD and pytest job names from a YAML file"""
+        with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
 
         # Try YAML parsing first if available
         if YAML_AVAILABLE:
             data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                return
 
             # Walk through all jobs to find ROLE, TEST_PY_BD values and
             # pytest job names
@@ -105,25 +125,44 @@ class GitLabCIParser:
 
         # If YAML is not available, use regex fallback
         else:
-            # Extract ROLE values - look for "ROLE: value" patterns
             role_matches = re.findall(r'^[ \t]*ROLE:\s*([a-zA-Z0-9_-]+)',
                                     content, re.MULTILINE)
             roles.update(role_matches)
 
-            # Extract TEST_PY_BD values - look for "TEST_PY_BD: value" patterns
             board_matches = re.findall(r'^[ \t]*TEST_PY_BD:\s*"([^"]+)"',
                                      content, re.MULTILINE)
             boards.update(board_matches)
 
-            # Extract pytest job names - look for lines ending with "test.py:"
             job_matches = re.findall(r'^([^#\s][^:]*test\.py):', content,
                                      re.MULTILINE)
             job_names.update(job_matches)
 
-        # Store sorted lists
-        self._roles = sorted(list(roles))
-        self._boards = sorted(list(boards))
-        self._job_names = sorted(list(job_names))
+    @staticmethod
+    def _extract_sage(path, names):
+        """Extract sage-lab job names (top-level dict keys) from a YAML file"""
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        if YAML_AVAILABLE:
+            data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                return
+            # Job names are top-level dict entries that have a variables
+            # section (so not the .template anchors or meta keys).
+            for job_name, job_config in data.items():
+                if not isinstance(job_name, str) or job_name.startswith('.'):
+                    continue
+                if not isinstance(job_config, dict):
+                    continue
+                if isinstance(job_config.get('variables'), dict):
+                    names.add(job_name)
+        else:
+            # Match top-level keys (no leading whitespace, not starting
+            # with '.' or '#') whose immediate child is a YAML mapping
+            for match in re.finditer(
+                    r'^([^.#\s][^:\n]*?):\s*\n(?=[ \t]+\S)', content,
+                    re.MULTILINE):
+                names.add(match.group(1))
 
     @property
     def roles(self):
@@ -139,3 +178,8 @@ class GitLabCIParser:
     def job_names(self):
         """Get list of valid pytest job names"""
         return self._job_names
+
+    @property
+    def sage_names(self):
+        """Get list of valid SAGE_LAB job names"""
+        return self._sage_names

@@ -132,6 +132,7 @@ Some simple examples::
 - ``-p, --pytest [BOARD]``: Enable PYTEST (optionally specify board name)
 - ``-r, --remote REMOTE``: Git remote to push to (default: ``ci_remote``
   setting or ``ci``)
+- ``-S, --sage [NAME]``: Set SAGE_LAB (optionally specify job name)
 - ``-s, --suites``: Enable SUITES
 - ``-t, --test-spec SPEC``: Override test specification (e.g. "not sleep",
   "test_ofplatdata")
@@ -183,8 +184,8 @@ The tool can create GitLab merge requests with automated pipeline creation::
 
     # Create merge request with specific CI stages (tags added automatically)
     uman ci --merge -0        # Adds [skip-suites] [skip-pytest] etc.
-    uman ci --merge --suites  # Adds [skip-pytest] [skip-world] [skip-sjg]
-    uman ci --merge --world   # Adds [skip-suites] [skip-pytest] [skip-sjg]
+    uman ci --merge --suites  # Adds [skip-pytest] [skip-world] [skip-sjg] [skip-sage]
+    uman ci --merge --world   # Adds [skip-suites] [skip-pytest] [skip-sjg] [skip-sage]
 
 **Important**: Merge requests only support stage-level control (which stages
 run), not fine-grained selection of specific boards or test specifications.
@@ -1142,6 +1143,7 @@ Key findings about GitLab merge request and pipeline creation:
    - ``[skip-pytest]`` - Skip pytest/test.py stages
    - ``[skip-world]`` - Skip world_build stage
    - ``[skip-sjg]`` - Skip sjg-lab stage
+   - ``[skip-sage]`` - Skip sage-lab stage
 
 4. **Recommended Workflow**:
 

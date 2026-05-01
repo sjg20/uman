@@ -154,6 +154,7 @@ def make_args(**kwargs):
         'setup_only': False,
         'show_cmd': False,
         'show_output': False,
+        'sage': None,
         'sjg': None,
         'suites': False,
         'test_spec': [],
@@ -2796,7 +2797,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2808,7 +2810,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2820,7 +2823,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '1',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2832,7 +2836,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2844,7 +2849,34 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': 'rpi4'
+            'SJG_LAB': 'rpi4',
+            'SAGE_LAB': '',
+        }
+        self.assertEqual(expected, ci_vars)
+
+    def test_build_ci_vars_sage_flag(self):
+        """Test build_ci_vars with --sage flag"""
+        args = make_args(sage='1')
+        ci_vars = control.build_ci_vars(args)
+        expected = {
+            'SUITES': '0',
+            'PYTEST': '0',
+            'WORLD': '0',
+            'SJG_LAB': '',
+            'SAGE_LAB': '1',
+        }
+        self.assertEqual(expected, ci_vars)
+
+    def test_build_ci_vars_sage_name(self):
+        """Test build_ci_vars with --sage <job-name>"""
+        args = make_args(sage='Raspberry Pi 4')
+        ci_vars = control.build_ci_vars(args)
+        expected = {
+            'SUITES': '0',
+            'PYTEST': '0',
+            'WORLD': '0',
+            'SJG_LAB': '',
+            'SAGE_LAB': 'Raspberry Pi 4',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2857,7 +2889,8 @@ class TestUmanCIVars(TestBase):
             'PYTEST': '0',
             'WORLD': '0',
             'SJG_LAB': '',
-            'TEST_SPEC': 'not sleep'
+            'SAGE_LAB': '',
+            'TEST_SPEC': 'not sleep',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2869,7 +2902,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'coreboot',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2881,7 +2915,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'coreboot',
             'WORLD': '0',
-            'SJG_LAB': 'bbb'
+            'SJG_LAB': 'bbb',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2894,7 +2929,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'sandbox',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
         self.assertNotIn('TEST_SPEC', ci_vars)
@@ -2907,7 +2943,8 @@ class TestUmanCIVars(TestBase):
             'PYTEST': 'coreboot',
             'WORLD': '0',
             'SJG_LAB': '',
-            'TEST_SPEC': 'test_ofplatdata'
+            'SAGE_LAB': '',
+            'TEST_SPEC': 'test_ofplatdata',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2919,7 +2956,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'sandbox with clang test.py',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2928,19 +2966,22 @@ class TestUmanCIVars(TestBase):
 
     def test_build_ci_vars_all_flags(self):
         """Test build_ci_vars with all flags enabled"""
-        args = make_args(suites=True, pytest='1', world=True, sjg='1')
+        args = make_args(suites=True, pytest='1', world=True, sjg='1',
+                         sage='1')
         ci_vars = control.build_ci_vars(args)
         expected = {
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '1',
         }
         self.assertEqual(expected, ci_vars)
 
     def test_build_commit_tags_no_skip(self):
         """Test build_commit_tags with no skip flags (all enabled)"""
-        args = make_args(suites=True, pytest='1', world=True, sjg='1')
+        args = make_args(suites=True, pytest='1', world=True, sjg='1',
+                         sage='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('', tags)
@@ -2951,14 +2992,16 @@ class TestUmanCIVars(TestBase):
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
-            '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]', tags)
+            '[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
+            '[skip-sage]', tags)
 
     def test_build_commit_tags_skip_specific(self):
         """Test build_commit_tags with specific stages enabled"""
         args = make_args(suites=True)  # Only suites enabled, others skip
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
-        self.assertEqual('[skip-pytest] [skip-world] [skip-sjg]', tags)
+        self.assertEqual(
+            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage]', tags)
 
     def test_build_commit_tags_skip_world_only(self):
         """Test build_commit_tags with world skipped"""
@@ -2966,18 +3009,19 @@ class TestUmanCIVars(TestBase):
         args = make_args(suites=True, pytest='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
-        self.assertEqual('[skip-world] [skip-sjg]', tags)
+        self.assertEqual('[skip-world] [skip-sjg] [skip-sage]', tags)
 
     def test_commit_message_tag_integration(self):
         """Test that tags are correctly integrated into commit message"""
-        tags = '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]'
+        tags = ('[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
+                '[skip-sage]')
 
         # Empty description with tags
         self.assertEqual(tags, control.build_desc('', tags))
 
         # Existing description with tags
         exp = ('This is a test commit\n\nSome details about the change\n\n'
-               '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]')
+               + tags)
         self.assertEqual(
             exp, control.build_desc(
                 'This is a test commit\n\nSome details about the change', tags))
@@ -3041,7 +3085,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
-            '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= ci master\n',
+            '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_specific_variables(self):
@@ -3054,7 +3099,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
-            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 ci master\n',
+            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_no_ci_flag(self):
@@ -3067,7 +3113,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=0 -o ci.variable=PYTEST=0 '
-            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= ci master\n',
+            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_custom_remote(self):
@@ -3960,6 +4007,25 @@ class TestGitLabParser(TestBase):
 
         # Invalid value should not be in roles
         self.assertNotIn('definitely_invalid_role_12345', parser.roles)
+
+    def test_validate_sage_value(self):
+        """Test SAGE value validation with class"""
+        parser = gitlab_parser.GitLabCIParser()
+
+        # Special values are always valid
+        self.assertTrue(control.validate_sage_value('1', parser))
+        self.assertTrue(control.validate_sage_value('', parser))
+        self.assertTrue(control.validate_sage_value('help', parser))
+
+        # Real sage job (if any) is valid
+        if parser.sage_names:
+            self.assertTrue(
+                control.validate_sage_value(parser.sage_names[0], parser))
+
+        # Bogus job name is not valid
+        self.assertFalse(
+            control.validate_sage_value(
+                'definitely_invalid_sage_job_xyz', parser))
 
     def test_validate_pytest_value(self):
         """Test pytest value validation with class"""

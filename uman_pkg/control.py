@@ -46,18 +46,20 @@ def build_ci_vars(args):
         'SUITES': '0',
         'PYTEST': '0',
         'WORLD': '0',
-        'SJG_LAB': ''
+        'SJG_LAB': '',
+        'SAGE_LAB': '',
     }
 
     if not args.null:
         ci_flags_set = (args.suites or args.pytest or args.world or
-                       args.sjg or args.test_spec)
+                       args.sjg or args.sage or args.test_spec)
 
         if args.all:
             ci_vars['SUITES'] = '1'
             ci_vars['PYTEST'] = '1'
             ci_vars['WORLD'] = '1'
             ci_vars['SJG_LAB'] = '1'
+            ci_vars['SAGE_LAB'] = '1'
         elif not ci_flags_set:
             ci_vars['SUITES'] = '1'
             ci_vars['PYTEST'] = '1'
@@ -73,6 +75,8 @@ def build_ci_vars(args):
                 ci_vars['WORLD'] = '1'
             if args.sjg is not None:
                 ci_vars['SJG_LAB'] = args.sjg
+            if args.sage is not None:
+                ci_vars['SAGE_LAB'] = args.sage
             if args.test_spec:
                 ci_vars['TEST_SPEC'] = args.test_spec
 
@@ -100,6 +104,8 @@ def build_commit_tags(args, ci_vars):  # pylint: disable=unused-argument
         tags.append('[skip-world]')
     if ci_vars.get('SJG_LAB') in ('0', ''):
         tags.append('[skip-sjg]')
+    if ci_vars.get('SAGE_LAB') in ('0', ''):
+        tags.append('[skip-sage]')
 
     return ' '.join(tags)
 
@@ -326,6 +332,43 @@ def validate_sjg_value(value, parser):
     return value in parser.roles
 
 
+def show_sage_choices(parser):
+    """Show all available SAGE_LAB choices
+
+    Args:
+        parser (GitLabCIParser): GitLabCIParser instance
+
+    Returns:
+        int: Exit code (always 0)
+    """
+    tout.notice('Available SAGE_LAB targets:')
+    tout.notice('')
+    tout.notice('Special values:')
+    tout.notice('  1                    - Run all sage-lab jobs')
+    tout.notice('  (empty)              - Manual sage-lab jobs only')
+    tout.notice('')
+    tout.notice('Job names:')
+    for name in parser.sage_names:
+        tout.notice(f'  {name}')
+
+    return 0
+
+
+def validate_sage_value(value, parser):
+    """Validate a SAGE_LAB value against available choices
+
+    Args:
+        value (str): Value to validate
+        parser (GitLabCIParser): GitLabCIParser instance
+
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    if value in ('1', '', 'help'):
+        return True
+    return value in parser.sage_names
+
+
 def validate_ci_args(args):
     """Validate CI arguments and handle help requests
 
@@ -346,6 +389,8 @@ def validate_ci_args(args):
         return show_pytest_choices(parser)
     if args.sjg == 'help':
         return show_sjg_choices(parser)
+    if args.sage == 'help':
+        return show_sage_choices(parser)
 
     # Validate pytest argument
     if args.pytest is not None:
@@ -359,6 +404,13 @@ def validate_ci_args(args):
         if not validate_sjg_value(args.sjg, parser):
             tout.error(f'Invalid SJG_LAB value: {args.sjg}')
             tout.notice(f'To see available choices: {sys.argv[0]} ci -l help')
+            return 1
+
+    # Validate sage argument
+    if args.sage is not None:
+        if not validate_sage_value(args.sage, parser):
+            tout.error(f'Invalid SAGE_LAB value: {args.sage}')
+            tout.notice(f'To see available choices: {sys.argv[0]} ci -S help')
             return 1
 
     # All validation passed

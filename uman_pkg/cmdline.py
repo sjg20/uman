@@ -137,6 +137,7 @@ def add_ci_subparser(subparsers):
 
     pytest_help = 'Enable PYTEST: to select a particular one: -p help'
     sjg_help = 'Enable SJG_LAB: to select a particular board: -l help'
+    sage_help = 'Enable SAGE_LAB: to select a particular board: -S help'
 
     ci.add_argument('-0', '--null', action='store_true',
                     help='Set all CI vars to 0')
@@ -155,6 +156,8 @@ def add_ci_subparser(subparsers):
     ci.add_argument('-r', '--remote', metavar='REMOTE', default=None,
                     help='Git remote to push to (default: ci_remote setting '
                     "or 'ci')")
+    ci.add_argument('-S', '--sage', nargs='?', const='1', default=None,
+                    help=sage_help)
     ci.add_argument('-s', '--suites', action='store_true',
                     help='Enable SUITES')
     ci.add_argument('-t', '--test-spec', metavar='SPEC',
