@@ -361,17 +361,76 @@ def add_mount(name, mount_name, source, path, dry_run=False, shift=False):
         dry_run (bool): If True, just show command
         shift (bool): If True, use idmapped mount for uid/gid
             translation so container root can access host-owned files
+
+    Returns:
+        bool: True on success (including no-op when already mounted),
+            False if the source path is missing or the lxc command failed
     """
     if not dry_run and has_mount(name, mount_name):
         if shift:
             lxc('config', 'device', 'set', name, mount_name,
                 'shift', 'true')
-        return
+        return True
+    if not dry_run and not os.path.exists(source):
+        tout.error(f'Source path does not exist: {source}')
+        return False
     args = [f'source={source}', f'path={path}']
     if shift:
         args.append('shift=true')
-    lxc('config', 'device', 'add', '-q', name, mount_name, 'disk',
-        *args, dry_run=dry_run)
+    result = lxc('config', 'device', 'add', '-q', name, mount_name, 'disk',
+                 *args, dry_run=dry_run)
+    if result is None:
+        return True  # dry_run
+    if result.return_code:
+        tout.error(f'Failed to add mount {mount_name!r}: '
+                   f'{(result.stderr or result.stdout).strip()}')
+        return False
+    return True
+
+
+def get_skip_path(name):
+    """Get the per-container skipped-mounts file path"""
+    return os.path.join(os.path.expanduser('~'), '.claude', 'cc', name,
+                        'skipped-mounts')
+
+
+def get_skipped_mounts(name):
+    """Get the set of mount names that should not be auto-added
+
+    Args:
+        name (str): Container name
+
+    Returns:
+        set: Mount names previously removed via `cc -u`
+    """
+    path = get_skip_path(name)
+    if not os.path.exists(path):
+        return set()
+    with open(path, encoding='utf-8') as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def mark_skipped(name, mount_name):
+    """Add a mount name to the per-container skip list"""
+    path = get_skip_path(name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    skipped = get_skipped_mounts(name)
+    skipped.add(mount_name)
+    with open(path, 'w', encoding='utf-8') as f:
+        for mname in sorted(skipped):
+            f.write(f'{mname}\n')
+
+
+def unmark_skipped(name, mount_name):
+    """Remove a mount name from the per-container skip list"""
+    skipped = get_skipped_mounts(name)
+    if mount_name not in skipped:
+        return
+    skipped.discard(mount_name)
+    path = get_skip_path(name)
+    with open(path, 'w', encoding='utf-8') as f:
+        for mname in sorted(skipped):
+            f.write(f'{mname}\n')
 
 
 def remove_mount(name, mount_name, dry_run=False):
@@ -389,6 +448,8 @@ def remove_mount(name, mount_name, dry_run=False):
         tout.error(f'No device {mount_name!r} on container {name}')
         return False
     lxc('config', 'device', 'remove', name, mount_name, dry_run=dry_run)
+    if not dry_run:
+        mark_skipped(name, mount_name)
     return True
 
 
@@ -809,7 +870,8 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
                    no_output=False, dry_run=False):
     """Add all mounts (essential, git symlink, config, CLI) to a container
 
-    Skips any devices that already exist.
+    Skips any devices that already exist or are on the per-container
+    skip list (mounts the user explicitly removed via `cc -u`).
 
     Args:
         name (str): Container name
@@ -819,25 +881,33 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
         no_output (bool): If True, remove /tmp/b mount
         dry_run (bool): If True, just show commands
     """
+    skipped = get_skipped_mounts(name) if not dry_run else set()
+
+    def maybe_add(mname, source, dest, **kw):
+        if mname in skipped:
+            return
+        add_mount(name, mname, source, dest, dry_run, **kw)
+
     for mname, source, dest in get_essential_mounts(project_src):
-        add_mount(name, mname, source, dest, dry_run)
+        maybe_add(mname, source, dest)
 
     # Per-container projects dir so --continue is scoped correctly
     home = os.path.expanduser('~')
     proj_dir = os.path.join(home, '.claude', 'cc', name)
     os.makedirs(proj_dir, exist_ok=True)
-    add_mount(name, 'claudeproj', proj_dir,
-              f'{UBUNTU_HOME}/.claude/projects', dry_run)
+    maybe_add('claudeproj', proj_dir, f'{UBUNTU_HOME}/.claude/projects')
 
     git_mount = get_git_symlink_mount(project_src)
     if git_mount:
-        add_mount(name, *git_mount, dry_run)
+        maybe_add(*git_mount)
 
     # Mount /tmp/b if requested, or remove if -O
     if output:
         tmp_dir = '/tmp/b'
         os.makedirs(tmp_dir, exist_ok=True)
         new_tmpb = not dry_run and not has_mount(name, 'tmpb')
+        if not dry_run:
+            unmark_skipped(name, 'tmpb')
         add_mount(name, 'tmpb', tmp_dir, '/tmp/b', dry_run)
         if new_tmpb and container_status(name) == 'RUNNING':
             tout.notice(
@@ -849,13 +919,15 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
 
     pbuilder = '/var/cache/pbuilder'
     if os.path.isdir(pbuilder):
-        add_mount(name, 'pbuilder', pbuilder, pbuilder, dry_run,
-                  shift=True)
+        maybe_add('pbuilder', pbuilder, pbuilder, shift=True)
 
     for mname, source, dest in get_config_mounts():
-        add_mount(name, mname, source, dest, dry_run)
+        maybe_add(mname, source, dest)
 
+    # Explicit -m args override the skip list (re-mounting clears it)
     for mname, source, dest in get_cli_mounts(mount_args):
+        if not dry_run:
+            unmark_skipped(name, mname)
         add_mount(name, mname, source, dest, dry_run)
 
 
@@ -963,10 +1035,13 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
         if not args.dry_run and not container_exists(name):
             tout.error(f'Container not found: {name}')
             return 1
+        rc = 0
         for mname, source, dest in get_cli_mounts(args.mount):
-            add_mount(name, mname, source, dest, args.dry_run)
-            tout.notice(f'Mounted {source} -> {dest} ({mname})')
-        return 0
+            if add_mount(name, mname, source, dest, args.dry_run):
+                tout.notice(f'Mounted {source} -> {dest} ({mname})')
+            else:
+                rc = 1
+        return rc
 
     if args.unmount:
         name = args.name or os.path.basename(os.path.realpath(os.getcwd()))
