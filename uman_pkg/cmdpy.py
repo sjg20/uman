@@ -509,18 +509,18 @@ def build_pytest_cmd(args):
     board_id = args.test_py_id or get_board_test_id(args.board)
     cmd.extend(['--id', board_id])
 
-    # Build test spec from user args and gitlab defaults
+    # Build test spec: user args take precedence over gitlab defaults
     spec_parts = []
     if args.test_spec:
         # Convert Class:method or Class::method to "Class and method" for -k
         spec = ' '.join(args.test_spec)
         spec = spec.replace('::', ' and ').replace(':', ' and ')
         spec_parts.append(spec)
-
-    # Add gitlab TEST_PY_TEST_SPEC as default filter
-    gitlab_spec = get_board_test_spec(args.board)
-    if gitlab_spec:
-        spec_parts.append(f'({gitlab_spec})')
+    else:
+        # Fall back to gitlab TEST_PY_TEST_SPEC if no user spec given
+        gitlab_spec = get_board_test_spec(args.board)
+        if gitlab_spec:
+            spec_parts.append(f'({gitlab_spec})')
 
     if spec_parts:
         cmd.extend(['-k', ' and '.join(spec_parts)])
@@ -1199,9 +1199,10 @@ def collect_tests(args):
     spec_parts = []
     if args.test_spec:
         spec_parts.append(f"({' '.join(args.test_spec)})")
-    gitlab_spec = get_board_test_spec(args.board)
-    if gitlab_spec:
-        spec_parts.append(f'({gitlab_spec})')
+    else:
+        gitlab_spec = get_board_test_spec(args.board)
+        if gitlab_spec:
+            spec_parts.append(f'({gitlab_spec})')
     if spec_parts:
         cmd.extend(['-k', ' and '.join(spec_parts)])
 

@@ -7151,6 +7151,52 @@ class TestPytestId(TestBase):
             self.assertIn(hooks_py, env['PYTHONPATH'])
 
 
+class TestPytestSpec(TestBase):
+    """Tests for pytest test-spec handling"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.WARNING)
+
+    def _build_args(self, test_spec=None):
+        return make_args(
+            cmd='pytest', board='qemu_arm64_spl',
+            test_spec=test_spec or [], build=False, output_dir=None,
+            test_py_id=None, why_skip=False,
+            quiet=False, show_output=False, no_timeout=False,
+            setup_only=False, persist=False, gdb_phase=None, gdbserver=None,
+            timing=None, exitfirst=False, malloc_dump=None, leak_check=False,
+            show_leaks=10, flattree_too=False)
+
+    def test_user_spec_overrides_gitlab(self):
+        """Test that a user-supplied -t spec replaces the gitlab default"""
+        with mock.patch.object(cmdpy, 'get_board_test_spec',
+                               return_value='test_passage'):
+            with mock.patch.object(cmdpy, 'get_board_test_id',
+                                   return_value='qemu'):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    args = self._build_args(test_spec=['help'])
+                    cmd = cmdpy.build_pytest_cmd(args)
+        self.assertIn('-k', cmd)
+        spec = cmd[cmd.index('-k') + 1]
+        self.assertEqual('help', spec)
+
+    def test_no_user_spec_uses_gitlab(self):
+        """Test that gitlab spec is used when user provides no -t"""
+        with mock.patch.object(cmdpy, 'get_board_test_spec',
+                               return_value='test_passage'):
+            with mock.patch.object(cmdpy, 'get_board_test_id',
+                                   return_value='qemu'):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    args = self._build_args()
+                    cmd = cmdpy.build_pytest_cmd(args)
+        self.assertIn('-k', cmd)
+        spec = cmd[cmd.index('-k') + 1]
+        self.assertEqual('(test_passage)', spec)
+
+
 class TestDockerTest(TestBase):
     """Test the docker (d) subcommand"""
 
