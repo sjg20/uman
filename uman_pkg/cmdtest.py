@@ -48,9 +48,9 @@ RE_LEAK = re.compile(r'Leak:\s+(\d+)\s+alloc')
 RE_LEAK_DETAIL = re.compile(r'\s+[0-9a-f]+\s+([0-9a-f]+)\s+(\S+:\d+.*)')
 
 # Unit test flags from include/test/test.h
-UTF_FLAT_TREE = 0x08
-UTF_LIVE_TREE = 0x10
-UTF_DM = 0x80
+UTF_FLAT_TREE = 0x08    # BIT(3): test needs flat DT
+UTF_LIVE_TREE = 0x10    # BIT(4): test needs live device tree
+UTF_DM = 0x40           # BIT(6): test uses driver model
 
 
 def get_sandbox_path():
