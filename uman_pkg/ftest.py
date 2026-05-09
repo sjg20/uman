@@ -6208,6 +6208,27 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
         self.assertEqual(1, prog.failed)
         self.assertEqual(0, prog.skipped)
 
+    def test_progress_switches_to_result_when_seen(self):
+        """Test Progress switches from Test: to Result: counts on first hit
+
+        For older U-Boot trees has_emit_result() may be False, but the
+        framework can still emit Result: lines. When that happens, we
+        should drop the Test:-line counts and rely on Result: lines so
+        the live progress matches the final summary.
+        """
+        prog = cmdtest.Progress(emit_result=False)
+        # Several Test: lines arrive first (older-style live output)
+        prog.update(None, b'Test: a\nTest: b\nTest: c\n')
+        # First Result: line appears -- counts should reset to 0 and start
+        # tracking Result: lines instead
+        prog.update(None,
+                    b'Result: PASS a\nResult: PASS b\nResult: FAIL c\n')
+        prog.finish()
+        self.assertEqual(2, prog.passed)
+        self.assertEqual(1, prog.failed)
+        self.assertEqual(0, prog.skipped)
+        self.assertTrue(prog.has_result)
+
     def test_progress_partial_lines(self):
         """Test Progress handles data split across chunks"""
         prog = cmdtest.Progress(emit_result=True)

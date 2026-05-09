@@ -702,6 +702,9 @@ class Progress:
     """
 
     def __init__(self, emit_result, total=0):
+        # emit_result kept for API compatibility but no longer drives the
+        # counting strategy: Progress switches to Result: lines as soon as
+        # one is seen, regardless of has_emit_result().
         self.emit = emit_result
         self.total = total
         self.passed = 0
@@ -711,6 +714,7 @@ class Progress:
         self.leak_bytes = 0
         self.buf = ''
         self.pending = False  # A Test: line seen, not yet resolved
+        self.has_result = False  # True once a Result: line has been seen
 
     def _show(self):
         """Print the progress line, overwriting the previous one"""
@@ -749,27 +753,41 @@ class Progress:
         if detail:
             self.leak_bytes += int(detail.group(1), 16)
             return
-        if self.emit:
-            match = RE_RESULT.match(line)
-            if match:
-                status = match.group(1)
-                if status == 'PASS':
-                    self.passed += 1
-                elif status == 'FAIL':
-                    self.failed += 1
-                elif status == 'SKIP':
-                    self.skipped += 1
-                self._show()
-        else:
-            if RE_TEST_FAILED.search(line):
-                self.failed += 1
+
+        # Result: lines are the source of truth when present. Switching on
+        # the first Result: line drops any Test:-line counts gathered before
+        # so the live progress matches what parse_results() will report.
+        match = RE_RESULT.match(line)
+        if match:
+            if not self.has_result:
+                self.has_result = True
+                self.passed = 0
+                self.failed = 0
+                self.skipped = 0
                 self.pending = False
-                self._show()
-            elif RE_TEST_NAME.match(line):
-                if self.pending:
-                    self.passed += 1
-                self.pending = True
-                self._show()
+            status = match.group(1)
+            if status == 'PASS':
+                self.passed += 1
+            elif status == 'FAIL':
+                self.failed += 1
+            elif status == 'SKIP':
+                self.skipped += 1
+            self._show()
+            return
+
+        # No Result: line yet -- fall back to counting Test: lines so older
+        # U-Boot trees that do not emit Result: still show progress.
+        if self.has_result:
+            return
+        if RE_TEST_FAILED.search(line):
+            self.failed += 1
+            self.pending = False
+            self._show()
+        elif RE_TEST_NAME.match(line):
+            if self.pending:
+                self.passed += 1
+            self.pending = True
+            self._show()
 
     def update(self, _stream, data):  # pylint: disable=W9016,W9019
         """output_func callback for command.run_pipe()"""
@@ -782,7 +800,7 @@ class Progress:
 
     def finish(self):
         """Close out the progress line"""
-        if not self.emit and self.pending:
+        if not self.has_result and self.pending:
             self.passed += 1
             self.pending = False
         if self.passed or self.failed or self.skipped:
