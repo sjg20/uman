@@ -352,15 +352,18 @@ def resolve_one(suite, pattern, all_tests, known_suites):
             if test_name == full_name:
                 return [(test_suite, full_name)], True
 
-        # Try as a pattern across all suites
+        # Try as a pattern across all suites: collect actual matching test
+        # names. Constructing a glob like '{suite}_test_{search}*' would
+        # miss tests whose name does not start with that prefix (e.g.
+        # 'bootstd_test_bootflow_efi' for search='efi') and tests whose
+        # suite name happens to contain the search term.
         if pattern is None:
-            matches = set()
+            matches = []
             for test_suite, test_name in all_tests:
                 if fnmatch.fnmatch(test_name, f'*{suite}*'):
-                    matches.add(test_suite)
+                    matches.append((test_suite, test_name))
             if matches:
-                return [(s, f'{s}_test_{suite}*')
-                        for s in sorted(matches)], True
+                return sorted(matches), True
         return [], False
 
     # suite is None - search all suites for this pattern

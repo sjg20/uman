@@ -6332,6 +6332,39 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
         self.assertEqual([], resolved)
         self.assertEqual([(None, 'nonexistent')], unmatched)
 
+    def test_resolve_specs_partial_across_suites(self):
+        """Test partial-name matching returns actual tests, not glob
+
+        Bug: 'efi' previously generated patterns like 'bootstd_test_efi*'
+        which excluded tests that contain 'efi' but don't start with the
+        prefix (e.g. 'bootstd_test_bootflow_efi'). Resolve should return
+        the actual matching test names instead.
+        """
+        all_tests = [
+            ('bootstd', 'bootstd_test_bootflow_efi'),
+            ('bootstd', 'bootstd_test_other'),
+            ('common', 'common_test_efidebug'),
+            ('efi_unicoll', 'efi_unicoll_test_a'),
+            ('efi_unicoll', 'efi_unicoll_test_b'),
+            ('dm', 'test_acpi'),
+        ]
+
+        with mock.patch.object(cmdtest, 'get_tests_from_nm',
+                               return_value=all_tests):
+            resolved, unmatched = cmdtest.resolve_specs(
+                '/path/to/sandbox', [('efi', None)])
+
+        # All four tests with 'efi' in their name (or in their suite name)
+        # should be returned with their full test names
+        expected = [
+            ('bootstd', 'bootstd_test_bootflow_efi'),
+            ('common', 'common_test_efidebug'),
+            ('efi_unicoll', 'efi_unicoll_test_a'),
+            ('efi_unicoll', 'efi_unicoll_test_b'),
+        ]
+        self.assertEqual(expected, resolved)
+        self.assertEqual([], unmatched)
+
     def test_validate_specs_all(self):
         """Test validate_specs accepts 'all' without checking"""
         result = cmdtest.validate_specs('/path/to/sandbox', [('all', None)])
