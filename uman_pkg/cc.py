@@ -453,23 +453,31 @@ def remove_mount(name, mount_name, dry_run=False):
     return True
 
 
-def wait_for_user(name, dry_run=False):
+def wait_for_user(name, dry_run=False, timeout=60):
     """Wait until the ubuntu user exists in the container
 
     Args:
         name (str): Container name
         dry_run (bool): If True, just show command
+        timeout (int): Seconds to wait before giving up
+
+    Returns:
+        bool: True if the user appeared (or dry-run), False on timeout
     """
     if dry_run:
         tout.notice('# wait for ubuntu user')
-        return
-    while True:
+        return True
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         result = exec_cmd(
             ['lxc', 'exec', name, '--', 'id', '-u', 'ubuntu'],
             dry_run=False)
         if result and result.return_code == 0:
-            break
+            return True
         time.sleep(0.5)
+    tout.error(
+        f"Timed out waiting for 'ubuntu' user in container '{name}'")
+    return False
 
 
 def setup_container(name, dry_run=False):
@@ -938,15 +946,29 @@ def ensure_running(name, existed, dry_run=False):
         name (str): Container name
         existed (bool): Whether the container existed before this run
         dry_run (bool): If True, just show commands
-    """
-    if dry_run or not existed:
-        lxc('start', name, dry_run=dry_run)
-        return
 
-    status = container_status(name)
-    if status != 'RUNNING':
+    Returns:
+        bool: True if the container is (or would be) running, False if
+            'lxc start' failed
+    """
+    if dry_run:
+        lxc('start', name, dry_run=dry_run)
+        return True
+
+    if not existed:
+        result = lxc('start', name)
+    else:
+        status = container_status(name)
+        if status == 'RUNNING':
+            return True
         tout.notice(f'Starting container (was {status})')
-        lxc('start', name)
+        result = lxc('start', name)
+
+    if result and result.return_code:
+        msg = (result.stderr or result.stdout or '').strip()
+        tout.error(f"Failed to start container '{name}': {msg}")
+        return False
+    return True
 
 
 def show_containers():
@@ -1168,7 +1190,8 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
                     'Running in privileged mode (device-mapper enabled)')
 
         tout.progress('Starting container')
-        ensure_running(name, existed, dry_run)
+        if not ensure_running(name, existed, dry_run):
+            return 1
 
         # In privileged mode, uid namespacing is disabled, so the
         # container's ubuntu user (uid 1000) won't match the host uid.
@@ -1188,7 +1211,8 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
 
         # Wait for user and set up (idempotent operations)
         tout.progress('Waiting for container to be ready')
-        wait_for_user(name, dry_run)
+        if not wait_for_user(name, dry_run):
+            return 1
         tout.progress('Configuring container')
         setup_container(name, dry_run)
         tout.progress('Installing packages')

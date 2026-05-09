@@ -4979,6 +4979,34 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         finally:
             os.path.expanduser = orig_expanduser
 
+    def test_ensure_running_failure(self):
+        """Test ensure_running reports an error when 'lxc start' fails"""
+        bad = command.CommandResult(return_code=1, stdout='',
+                                    stderr='Error: bad mount\n')
+        with mock.patch.object(cc, 'lxc', return_value=bad):
+            with terminal.capture() as (_, err):
+                self.assertFalse(cc.ensure_running('foo', existed=False))
+        self.assertIn('Failed to start', err.getvalue())
+
+    def test_ensure_running_success(self):
+        """Test ensure_running returns True when start succeeds"""
+        good = command.CommandResult(return_code=0, stdout='', stderr='')
+        with mock.patch.object(cc, 'lxc', return_value=good):
+            self.assertTrue(cc.ensure_running('foo', existed=False))
+
+    def test_wait_for_user_timeout(self):
+        """Test wait_for_user times out instead of looping forever"""
+        bad = command.CommandResult(return_code=1, stdout='',
+                                    stderr='Error: container not running')
+        with mock.patch.object(cc, 'exec_cmd', return_value=bad):
+            with mock.patch.object(cc.time, 'sleep'):
+                with mock.patch.object(cc.time, 'time',
+                                       side_effect=[0, 1, 2, 999]):
+                    with terminal.capture() as (_, err):
+                        self.assertFalse(
+                            cc.wait_for_user('foo', timeout=10))
+        self.assertIn('Timed out', err.getvalue())
+
 
 @unittest.skipUnless(shutil.which('lxc'), 'LXC not available')
 class TestCcFunctional(unittest.TestCase):
