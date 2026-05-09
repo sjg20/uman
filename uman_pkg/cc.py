@@ -874,6 +874,15 @@ def list_containers():
     return containers
 
 
+def is_uman_project(project_src):
+    """Check whether project_src is the uman tree itself
+
+    Returns:
+        bool: True if the path looks like the uman source directory
+    """
+    return os.path.isfile(os.path.join(project_src, 'uman_pkg', '__init__.py'))
+
+
 def add_all_mounts(name, project_src, mount_args=None, output=False,
                    no_output=False, dry_run=False):
     """Add all mounts (essential, git symlink, config, CLI) to a container
@@ -890,6 +899,12 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
         dry_run (bool): If True, just show commands
     """
     skipped = get_skipped_mounts(name) if not dry_run else set()
+
+    # Default to mounting /tmp/b when developing uman itself, since the
+    # build_dir setting points there; for other projects keep -o opt-in
+    if not output and not no_output and is_uman_project(project_src):
+        if 'tmpb' not in skipped:
+            output = True
 
     def maybe_add(mname, source, dest, **kw):
         if mname in skipped:

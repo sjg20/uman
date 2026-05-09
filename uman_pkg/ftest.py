@@ -4422,6 +4422,17 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual('/tmp/myproject', datadir[1])
         self.assertEqual(cc.PROJECT_DEST, datadir[2])
 
+    def test_is_uman_project(self):
+        """Test is_uman_project detects the uman tree by uman_pkg/__init__.py"""
+        # Not uman: an empty directory
+        self.assertFalse(cc.is_uman_project(self.test_dir))
+
+        # Mark it as uman by creating uman_pkg/__init__.py
+        pkg_dir = os.path.join(self.test_dir, 'uman_pkg')
+        os.makedirs(pkg_dir)
+        tools.write_file(os.path.join(pkg_dir, '__init__.py'), b'')
+        self.assertTrue(cc.is_uman_project(self.test_dir))
+
     def test_get_config_mounts_no_section(self):
         """Test get_config_mounts with no [claude-code] section"""
         tools.write_file(self.config_file,
