@@ -6032,7 +6032,9 @@ Result: PASS dm_test_second
         self.assertFalse(err.getvalue())
         stdout = out.getvalue()
         self.assertIn('2 passed', stdout)
-        self.assertIn('0 failed', stdout)
+        # Zero counts are omitted from the summary
+        self.assertNotIn('failed', stdout)
+        self.assertNotIn('skipped', stdout)
 
     def test_run_tests_shows_output_when_no_results(self):
         """Test run_tests shows output when no results detected"""
@@ -6858,7 +6860,8 @@ class TestExt4l:
         self.assertEqual(0, ret)
         output = out.getvalue()
         self.assertIn('1 passed', output)
-        self.assertIn('0 failed', output)
+        # Zero counts are omitted from the summary
+        self.assertNotIn('failed', output)
         self.assertNotIn('Test output', output)
 
         # Test with FAIL result - output shown

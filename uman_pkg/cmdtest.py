@@ -725,15 +725,18 @@ class Progress:
         else:
             hdr = f'{done}:'
         mag = col.start(terminal.Color.MAGENTA)
-        parts = [f'{grn}{self.passed} passed{rst}',
-                 f'{red}{self.failed} failed{rst}',
-                 f'{yel}{self.skipped} skipped{rst}']
+        parts = [f'{grn}{self.passed} passed{rst}']
+        if self.failed:
+            parts.append(f'{red}{self.failed} failed{rst}')
+        if self.skipped:
+            parts.append(f'{yel}{self.skipped} skipped{rst}')
         if self.leaked:
             leak_str = f'{self.leaked} leaked'
             if self.leak_bytes:
                 leak_str += f' ({format_bytes(self.leak_bytes)})'
             parts.append(f'{mag}{leak_str}{rst}')
-        sys.stderr.write(f'\r  {hdr} {", ".join(parts)}')
+        # Pad with spaces to overwrite previous longer output
+        sys.stderr.write(f'\r  {hdr} {", ".join(parts)}\033[K')
         sys.stderr.flush()
 
     def _process_line(self, line):
