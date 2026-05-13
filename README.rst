@@ -369,6 +369,33 @@ idempotent setup steps.
   if the container is already running, prints a message about restarting
 - ``-P, --no-privileged``: Disable privileged mode (auto-restarts and restores uid)
 - ``-s, --shell [CMD]``: Open interactive shell, or run CMD in container
+- ``--ssh [USER@]HOST``: Set up SSH key access from the container to HOST
+  (see **SSH Key Setup** below)
+
+**SSH Key Setup**:
+
+The ``--ssh`` option lets the container ssh into another machine without
+typing a password every time. For example::
+
+    # Authorise access to 'kea' as the current host user
+    uman cc labgrid --ssh kea
+
+    # Use a specific remote user
+    uman cc labgrid --ssh alice@kea
+
+This:
+
+1. Generates ``~/.ssh/id_ed25519`` inside the container if it is not
+   already present. An existing key is reused.
+2. Resolves the destination hostname on the host (the container has its
+   own resolver and may not see local hostnames) and adds an entry to
+   ``/etc/hosts`` inside the container so ``ssh kea`` works.
+3. Runs ``ssh-copy-id`` from inside the container, prompting once for
+   the destination password to push the public key.
+4. Adds a ``Host`` / ``User`` block to ``~/.ssh/config`` inside the
+   container so ``ssh kea`` uses the right login name automatically.
+
+If USER is omitted, the current host user (``$USER``) is used.
 
 **Console Logging**:
 

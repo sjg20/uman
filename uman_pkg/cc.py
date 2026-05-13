@@ -8,8 +8,10 @@ This module handles the 'claude-code' subcommand which creates and manages LXC
 containers for running Claude Code.
 """
 
+import getpass
 import os
 import random
+import shlex
 import socket as socket_mod
 import string
 import subprocess
@@ -798,6 +800,89 @@ def launch_claude(name, cont=False, dry_run=False, log_file=None):
     exec_cmd(cmd, dry_run, capture=False, log_file=log_file)
 
 
+def setup_ssh_access(name, target, dry_run=False):
+    """Set up SSH key access from the container to a remote host
+
+    Generates an ed25519 keypair inside the container if one is not
+    already there, then runs ssh-copy-id to authorise the public key
+    on the remote host. The remote login is interactive so the user
+    can supply the destination password if needed.
+
+    Resolves the host name on the host side and adds an /etc/hosts
+    entry to the container, since the container has its own resolver
+    and may not see the user's local hostnames.
+
+    Args:
+        name (str): Container name
+        target (str): Remote target as HOST or USER@HOST. When USER is
+            omitted the current host user is used
+        dry_run (bool): If True, just show commands
+
+    Returns:
+        int: 0 on success, 1 on failure
+    """
+    if '@' not in target:
+        target = f'{getpass.getuser()}@{target}'
+
+    user, _, host = target.partition('@')
+    if not dry_run:
+        try:
+            ip = socket_mod.gethostbyname(host)
+        except socket_mod.gaierror as exc:
+            tout.error(f"Cannot resolve hostname {host!r} on host: {exc}")
+            return 1
+        if ip != host:
+            quoted_line = shlex.quote(f'{ip} {host}')
+            quoted_pattern = shlex.quote(
+                f'[[:space:]]{host}([[:space:]]|$)')
+            add_host = (
+                f'grep -qE {quoted_pattern} /etc/hosts || '
+                f'echo {quoted_line} >> /etc/hosts'
+            )
+            tout.info(f'Adding {ip} {host} to {name}:/etc/hosts')
+            result = lxc_exec(name, add_host, dry_run=False)
+            if result and result.return_code:
+                tout.error(f"Failed to update /etc/hosts in {name}")
+                return 1
+
+    keygen = (
+        f'mkdir -p {UBUNTU_HOME}/.ssh && chmod 700 {UBUNTU_HOME}/.ssh && '
+        f'[ -f {UBUNTU_HOME}/.ssh/id_ed25519 ] || '
+        f'ssh-keygen -t ed25519 -f {UBUNTU_HOME}/.ssh/id_ed25519 -N ""'
+    )
+    result = lxc_exec(name, keygen, dry_run=dry_run, user='ubuntu')
+    if not dry_run and result and result.return_code:
+        tout.error(f'Failed to generate SSH keypair in {name}')
+        return 1
+
+    # Make 'ssh <host>' use the right user from inside the container
+    config = f'{UBUNTU_HOME}/.ssh/config'
+    entry = shlex.quote(f'\nHost {host}\n    User {user}\n')
+    pattern = shlex.quote(f'^Host[[:space:]]+{host}([[:space:]]|$)')
+    add_config = (
+        f'touch {config} && chmod 600 {config} && '
+        f'grep -qE {pattern} {config} || '
+        f'printf %b {entry} >> {config}'
+    )
+    result = lxc_exec(name, add_config, dry_run=dry_run, user='ubuntu')
+    if not dry_run and result and result.return_code:
+        tout.error(f'Failed to update {config} in {name}')
+        return 1
+
+    tout.notice(f'Copying public key to {target} (password may be required)')
+    copy_cmd = ['lxc', 'exec', name, '--', 'sudo', '-iu', 'ubuntu',
+                'ssh-copy-id',
+                '-i', f'{UBUNTU_HOME}/.ssh/id_ed25519.pub',
+                '-o', 'StrictHostKeyChecking=accept-new',
+                target]
+    result = exec_cmd(copy_cmd, dry_run, capture=False)
+    if not dry_run and result and result.return_code:
+        tout.error(f'ssh-copy-id to {target} failed')
+        return 1
+    tout.notice(f"SSH access from '{name}' to {target} is set up")
+    return 0
+
+
 def stop_container(name, dry_run=False):
     """Stop a running container
 
@@ -1107,6 +1192,13 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
             return 1
         stop_container(args.name, args.dry_run)
         return 0
+
+    if args.ssh:
+        name = args.name or os.path.basename(os.path.realpath(os.getcwd()))
+        if not args.dry_run and not container_exists(name):
+            tout.error(f'Container not found: {name}')
+            return 1
+        return setup_ssh_access(name, args.ssh, args.dry_run)
 
     dry_run = args.dry_run
 

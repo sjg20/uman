@@ -109,6 +109,9 @@ def add_claude_code_subparser(subparsers):
     cc.add_argument('-s', '--shell', nargs='?', const=True,
                     default=False,
                     help='Open shell or run a command in container')
+    cc.add_argument('--ssh', metavar='[USER@]HOST',
+                    help='Set up SSH key access from the container to HOST '
+                    '(generates a keypair if missing and runs ssh-copy-id)')
     return cc
 
 

@@ -4342,6 +4342,54 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         args = cmdline.parse_args(['cc', '-s'])
         self.assertTrue(args.shell)
 
+    def test_cc_parsing_ssh(self):
+        """Test cc --ssh flag parses a host or user@host argument"""
+        args = cmdline.parse_args(['cc', '--ssh', 'remotebox'])
+        self.assertEqual('remotebox', args.ssh)
+
+        args = cmdline.parse_args(['cc', 'mybox', '--ssh', 'alice@host.lan'])
+        self.assertEqual('mybox', args.name)
+        self.assertEqual('alice@host.lan', args.ssh)
+
+        args = cmdline.parse_args(['cc'])
+        self.assertIsNone(args.ssh)
+
+    def test_setup_ssh_access_defaults_to_current_user(self):
+        """Test setup_ssh_access prepends current user when target has no '@'"""
+        calls = []
+
+        def fake_lxc_exec(name, cmd, dry_run=False, user=None):
+            calls.append(('lxc_exec', name, cmd, user))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        def fake_exec_cmd(cmd, dry_run, capture=False):  # pylint: disable=unused-argument
+            calls.append(('exec_cmd', cmd))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        with mock.patch.object(cc, 'lxc_exec', side_effect=fake_lxc_exec):
+            with mock.patch.object(cc, 'exec_cmd', side_effect=fake_exec_cmd):
+                with mock.patch.object(cc.getpass, 'getuser',
+                                       return_value='simon'):
+                    with mock.patch.object(cc.socket_mod, 'gethostbyname',
+                                           return_value='10.0.0.5'):
+                        with terminal.capture():
+                            rc = cc.setup_ssh_access('mybox', 'host.lan')
+        self.assertEqual(0, rc)
+        # The ssh-copy-id call should target simon@host.lan
+        copy_call = next(c for c in calls if c[0] == 'exec_cmd')
+        self.assertIn('simon@host.lan', copy_call[1])
+        # The /etc/hosts entry should be added by an lxc_exec call
+        hosts_calls = [c for c in calls if c[0] == 'lxc_exec'
+                       and '/etc/hosts' in c[2]]
+        self.assertEqual(1, len(hosts_calls))
+        self.assertIn('10.0.0.5 host.lan', hosts_calls[0][2])
+        # The ~/.ssh/config entry should declare User simon for host.lan
+        config_calls = [c for c in calls if c[0] == 'lxc_exec'
+                        and '.ssh/config' in c[2]]
+        self.assertEqual(1, len(config_calls))
+        self.assertIn('Host host.lan', config_calls[0][2])
+        self.assertIn('User simon', config_calls[0][2])
+
     def test_cc_parsing_base(self):
         """Test cc -b flag"""
         args = cmdline.parse_args(['cc', '-b', 'jammy'])
@@ -4625,8 +4673,13 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         orig_expanduser = os.path.expanduser
         os.path.expanduser = lambda p: p.replace('~', self.test_dir)
         try:
-            with terminal.capture() as (out, _):
-                cc.run(args)
+            # Force is_uman_project False so /tmp/b isn't auto-mounted by
+            # the uman-tree heuristic; this test runs from inside the
+            # uman source tree.
+            with mock.patch.object(cc, 'is_uman_project',
+                                   return_value=False):
+                with terminal.capture() as (out, _):
+                    cc.run(args)
             output = out.getvalue()
             self.assertIn('lxc init', output)
             self.assertIn('lxc start', output)
