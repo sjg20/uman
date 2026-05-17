@@ -7299,6 +7299,30 @@ class TestPytestId(TestBase):
             self.assertIn('PYTHONPATH', env)
             self.assertIn(hooks_py, env['PYTHONPATH'])
 
+    @mock.patch('uman_pkg.cmdpy.settings')
+    def test_pytest_env_tools_pythonpath(self, mock_settings):
+        """Test that pytest_env() adds tools/ to PYTHONPATH for u_boot_pylib"""
+        mock_settings.get.return_value = None
+
+        tools_dir = os.path.join(self.test_dir, 'tools')
+        os.makedirs(tools_dir)
+        os.makedirs(os.path.join(self.test_dir, 'test/hooks/bin/travis-ci'))
+
+        with mock.patch.object(cmdpy, 'get_uboot_dir',
+                               return_value=self.test_dir):
+            # tools/ is added even without --id
+            env = cmdpy.pytest_env('sandbox')
+            self.assertIn('PYTHONPATH', env)
+            self.assertIn(tools_dir, env['PYTHONPATH'])
+
+            # With --id, hooks dir is listed before tools/
+            hooks_py = os.path.join(self.test_dir,
+                                    'test/hooks/py/travis-ci')
+            os.makedirs(hooks_py)
+            env = cmdpy.pytest_env('sandbox', test_py_id='na')
+            parts = env['PYTHONPATH'].split(':')
+            self.assertEqual([hooks_py, tools_dir], parts[:2])
+
 
 class TestPytestSpec(TestBase):
     """Tests for pytest test-spec handling"""

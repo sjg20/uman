@@ -166,15 +166,23 @@ def pytest_env(board, test_py_id=None):
     # Local hooks from U-Boot tree take precedence
     uboot_dir = get_uboot_dir()
 
-    # When --id is specified, add hooks pythonpath so boardenv files are found
-    if test_py_id and uboot_dir:
-        hooks_py = os.path.join(uboot_dir, 'test/hooks/py/travis-ci')
-        if os.path.exists(hooks_py):
-            current = os.environ.get('PYTHONPATH', '')
-            if current:
-                env['PYTHONPATH'] = f'{hooks_py}:{current}'
-            else:
-                env['PYTHONPATH'] = hooks_py
+    # Build PYTHONPATH so test modules can import from the U-Boot tree:
+    # tools/ for u_boot_pylib, and the hooks dir for boardenv files when
+    # --id is in use.
+    pythonpath_parts = []
+    if uboot_dir:
+        tools_dir = os.path.join(uboot_dir, 'tools')
+        if os.path.isdir(tools_dir):
+            pythonpath_parts.append(tools_dir)
+        if test_py_id:
+            hooks_py = os.path.join(uboot_dir, 'test/hooks/py/travis-ci')
+            if os.path.exists(hooks_py):
+                pythonpath_parts.insert(0, hooks_py)
+    if pythonpath_parts:
+        current = os.environ.get('PYTHONPATH', '')
+        if current:
+            pythonpath_parts.append(current)
+        env['PYTHONPATH'] = ':'.join(pythonpath_parts)
 
     if uboot_dir:
         local_hooks = os.path.join(uboot_dir, 'test/hooks/bin')
