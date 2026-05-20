@@ -45,12 +45,12 @@ RE_RESULT = re.compile(r'Result:\s*(PASS|FAIL|SKIP):?\s+(\S+)')
 RE_SUMMARY = re.compile(r'Tests run:\s*(\d+),.*failures:\s*(\d+)')
 RE_TEST_FAILED = re.compile(r"Test '.+' failed \d+ times")
 RE_LEAK = re.compile(r'Leak:\s+(\d+)\s+alloc')
-RE_LEAK_DETAIL = re.compile(r'\s+[0-9a-f]+\s+([0-9a-f]+)\s+(.*)')
+RE_LEAK_DETAIL = re.compile(r'\s+[0-9a-f]+\s+([0-9a-f]+)\s+(\S+:\d+.*)')
 
 # Unit test flags from include/test/test.h
-UTF_FLAT_TREE = 0x08
-UTF_LIVE_TREE = 0x10
-UTF_DM = 0x80
+UTF_FLAT_TREE = 0x08    # BIT(3): test needs flat DT
+UTF_LIVE_TREE = 0x10    # BIT(4): test needs live device tree
+UTF_DM = 0x40           # BIT(6): test uses driver model
 
 
 def get_sandbox_path():
@@ -352,15 +352,18 @@ def resolve_one(suite, pattern, all_tests, known_suites):
             if test_name == full_name:
                 return [(test_suite, full_name)], True
 
-        # Try as a pattern across all suites
+        # Try as a pattern across all suites: collect actual matching test
+        # names. Constructing a glob like '{suite}_test_{search}*' would
+        # miss tests whose name does not start with that prefix (e.g.
+        # 'bootstd_test_bootflow_efi' for search='efi') and tests whose
+        # suite name happens to contain the search term.
         if pattern is None:
-            matches = set()
+            matches = []
             for test_suite, test_name in all_tests:
                 if fnmatch.fnmatch(test_name, f'*{suite}*'):
-                    matches.add(test_suite)
+                    matches.append((test_suite, test_name))
             if matches:
-                return [(s, f'{s}_test_{suite}*')
-                        for s in sorted(matches)], True
+                return sorted(matches), True
         return [], False
 
     # suite is None - search all suites for this pattern
@@ -699,6 +702,9 @@ class Progress:
     """
 
     def __init__(self, emit_result, total=0):
+        # emit_result kept for API compatibility but no longer drives the
+        # counting strategy: Progress switches to Result: lines as soon as
+        # one is seen, regardless of has_emit_result().
         self.emit = emit_result
         self.total = total
         self.passed = 0
@@ -708,6 +714,7 @@ class Progress:
         self.leak_bytes = 0
         self.buf = ''
         self.pending = False  # A Test: line seen, not yet resolved
+        self.has_result = False  # True once a Result: line has been seen
 
     def _show(self):
         """Print the progress line, overwriting the previous one"""
@@ -722,15 +729,18 @@ class Progress:
         else:
             hdr = f'{done}:'
         mag = col.start(terminal.Color.MAGENTA)
-        parts = [f'{grn}{self.passed} passed{rst}',
-                 f'{red}{self.failed} failed{rst}',
-                 f'{yel}{self.skipped} skipped{rst}']
+        parts = [f'{grn}{self.passed} passed{rst}']
+        if self.failed:
+            parts.append(f'{red}{self.failed} failed{rst}')
+        if self.skipped:
+            parts.append(f'{yel}{self.skipped} skipped{rst}')
         if self.leaked:
             leak_str = f'{self.leaked} leaked'
             if self.leak_bytes:
                 leak_str += f' ({format_bytes(self.leak_bytes)})'
             parts.append(f'{mag}{leak_str}{rst}')
-        sys.stderr.write(f'\r  {hdr} {", ".join(parts)}')
+        # Pad with spaces to overwrite previous longer output
+        sys.stderr.write(f'\r  {hdr} {", ".join(parts)}\033[K')
         sys.stderr.flush()
 
     def _process_line(self, line):
@@ -743,27 +753,41 @@ class Progress:
         if detail:
             self.leak_bytes += int(detail.group(1), 16)
             return
-        if self.emit:
-            match = RE_RESULT.match(line)
-            if match:
-                status = match.group(1)
-                if status == 'PASS':
-                    self.passed += 1
-                elif status == 'FAIL':
-                    self.failed += 1
-                elif status == 'SKIP':
-                    self.skipped += 1
-                self._show()
-        else:
-            if RE_TEST_FAILED.search(line):
-                self.failed += 1
+
+        # Result: lines are the source of truth when present. Switching on
+        # the first Result: line drops any Test:-line counts gathered before
+        # so the live progress matches what parse_results() will report.
+        match = RE_RESULT.match(line)
+        if match:
+            if not self.has_result:
+                self.has_result = True
+                self.passed = 0
+                self.failed = 0
+                self.skipped = 0
                 self.pending = False
-                self._show()
-            elif RE_TEST_NAME.match(line):
-                if self.pending:
-                    self.passed += 1
-                self.pending = True
-                self._show()
+            status = match.group(1)
+            if status == 'PASS':
+                self.passed += 1
+            elif status == 'FAIL':
+                self.failed += 1
+            elif status == 'SKIP':
+                self.skipped += 1
+            self._show()
+            return
+
+        # No Result: line yet -- fall back to counting Test: lines so older
+        # U-Boot trees that do not emit Result: still show progress.
+        if self.has_result:
+            return
+        if RE_TEST_FAILED.search(line):
+            self.failed += 1
+            self.pending = False
+            self._show()
+        elif RE_TEST_NAME.match(line):
+            if self.pending:
+                self.passed += 1
+            self.pending = True
+            self._show()
 
     def update(self, _stream, data):  # pylint: disable=W9016,W9019
         """output_func callback for command.run_pipe()"""
@@ -776,7 +800,7 @@ class Progress:
 
     def finish(self):
         """Close out the progress line"""
-        if not self.emit and self.pending:
+        if not self.has_result and self.pending:
             self.passed += 1
             self.pending = False
         if self.passed or self.failed or self.skipped:

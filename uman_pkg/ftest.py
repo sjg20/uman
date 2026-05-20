@@ -154,6 +154,7 @@ def make_args(**kwargs):
         'setup_only': False,
         'show_cmd': False,
         'show_output': False,
+        'sage': None,
         'sjg': None,
         'suites': False,
         'test_spec': [],
@@ -285,6 +286,44 @@ class TestUmanCmdline(TestBase):
         args = cmdline.parse_args(['py', '-B', 'sandbox'])
         self.assertEqual(args.cmd, 'pytest')
         self.assertEqual(args.board, 'sandbox')
+
+    def test_env_flag_parsing(self):
+        """Test that -e flag parses environment variables"""
+        args = cmdline.parse_args(
+            ['py', '-B', 'sandbox', '-b', '-e', 'BL31=/path/bl31.bin'])
+        self.assertEqual(['BL31=/path/bl31.bin'], args.env)
+
+        # Multiple -e flags
+        args = cmdline.parse_args(
+            ['py', '-B', 'sandbox', '-b',
+             '-e', 'BL31=/a', '-e', 'TEE=/b'])
+        self.assertEqual(['BL31=/a', 'TEE=/b'], args.env)
+
+        # No -e flag
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertIsNone(args.env)
+
+        # Also works with build subcommand
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-e', 'BL31=/path/bl31.bin'])
+        self.assertEqual(['BL31=/path/bl31.bin'], args.env)
+
+    def test_id_flag_parsing(self):
+        """Test that --id flag parses TEST_PY_ID"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox', '--id', 'na'])
+        self.assertEqual('na', args.test_py_id)
+
+        # No --id flag
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertIsNone(args.test_py_id)
+
+    def test_why_skip_flag_parsing(self):
+        """Test that --why-skip flag is parsed"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox', '--why-skip'])
+        self.assertTrue(args.why_skip)
+
+        args = cmdline.parse_args(['py', '-B', 'sandbox'])
+        self.assertFalse(args.why_skip)
 
     def test_build_subcommand_parsing(self):
         """Test that build subcommand parses correctly"""
@@ -2758,7 +2797,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2770,7 +2810,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2782,7 +2823,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '1',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2794,7 +2836,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '1',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2806,7 +2849,34 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': '0',
             'WORLD': '0',
-            'SJG_LAB': 'rpi4'
+            'SJG_LAB': 'rpi4',
+            'SAGE_LAB': '',
+        }
+        self.assertEqual(expected, ci_vars)
+
+    def test_build_ci_vars_sage_flag(self):
+        """Test build_ci_vars with --sage flag"""
+        args = make_args(sage='1')
+        ci_vars = control.build_ci_vars(args)
+        expected = {
+            'SUITES': '0',
+            'PYTEST': '0',
+            'WORLD': '0',
+            'SJG_LAB': '',
+            'SAGE_LAB': '1',
+        }
+        self.assertEqual(expected, ci_vars)
+
+    def test_build_ci_vars_sage_name(self):
+        """Test build_ci_vars with --sage <job-name>"""
+        args = make_args(sage='Raspberry Pi 4')
+        ci_vars = control.build_ci_vars(args)
+        expected = {
+            'SUITES': '0',
+            'PYTEST': '0',
+            'WORLD': '0',
+            'SJG_LAB': '',
+            'SAGE_LAB': 'Raspberry Pi 4',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2819,7 +2889,8 @@ class TestUmanCIVars(TestBase):
             'PYTEST': '0',
             'WORLD': '0',
             'SJG_LAB': '',
-            'TEST_SPEC': 'not sleep'
+            'SAGE_LAB': '',
+            'TEST_SPEC': 'not sleep',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2831,7 +2902,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'coreboot',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2843,7 +2915,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'coreboot',
             'WORLD': '0',
-            'SJG_LAB': 'bbb'
+            'SJG_LAB': 'bbb',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2856,7 +2929,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'sandbox',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
         self.assertNotIn('TEST_SPEC', ci_vars)
@@ -2869,7 +2943,8 @@ class TestUmanCIVars(TestBase):
             'PYTEST': 'coreboot',
             'WORLD': '0',
             'SJG_LAB': '',
-            'TEST_SPEC': 'test_ofplatdata'
+            'SAGE_LAB': '',
+            'TEST_SPEC': 'test_ofplatdata',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2881,7 +2956,8 @@ class TestUmanCIVars(TestBase):
             'SUITES': '0',
             'PYTEST': 'sandbox with clang test.py',
             'WORLD': '0',
-            'SJG_LAB': ''
+            'SJG_LAB': '',
+            'SAGE_LAB': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2890,19 +2966,22 @@ class TestUmanCIVars(TestBase):
 
     def test_build_ci_vars_all_flags(self):
         """Test build_ci_vars with all flags enabled"""
-        args = make_args(suites=True, pytest='1', world=True, sjg='1')
+        args = make_args(suites=True, pytest='1', world=True, sjg='1',
+                         sage='1')
         ci_vars = control.build_ci_vars(args)
         expected = {
             'SUITES': '1',
             'PYTEST': '1',
             'WORLD': '1',
-            'SJG_LAB': '1'
+            'SJG_LAB': '1',
+            'SAGE_LAB': '1',
         }
         self.assertEqual(expected, ci_vars)
 
     def test_build_commit_tags_no_skip(self):
         """Test build_commit_tags with no skip flags (all enabled)"""
-        args = make_args(suites=True, pytest='1', world=True, sjg='1')
+        args = make_args(suites=True, pytest='1', world=True, sjg='1',
+                         sage='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('', tags)
@@ -2913,14 +2992,16 @@ class TestUmanCIVars(TestBase):
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
-            '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]', tags)
+            '[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
+            '[skip-sage]', tags)
 
     def test_build_commit_tags_skip_specific(self):
         """Test build_commit_tags with specific stages enabled"""
         args = make_args(suites=True)  # Only suites enabled, others skip
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
-        self.assertEqual('[skip-pytest] [skip-world] [skip-sjg]', tags)
+        self.assertEqual(
+            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage]', tags)
 
     def test_build_commit_tags_skip_world_only(self):
         """Test build_commit_tags with world skipped"""
@@ -2928,18 +3009,19 @@ class TestUmanCIVars(TestBase):
         args = make_args(suites=True, pytest='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
-        self.assertEqual('[skip-world] [skip-sjg]', tags)
+        self.assertEqual('[skip-world] [skip-sjg] [skip-sage]', tags)
 
     def test_commit_message_tag_integration(self):
         """Test that tags are correctly integrated into commit message"""
-        tags = '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]'
+        tags = ('[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
+                '[skip-sage]')
 
         # Empty description with tags
         self.assertEqual(tags, control.build_desc('', tags))
 
         # Existing description with tags
         exp = ('This is a test commit\n\nSome details about the change\n\n'
-               '[skip-suites] [skip-pytest] [skip-world] [skip-sjg]')
+               + tags)
         self.assertEqual(
             exp, control.build_desc(
                 'This is a test commit\n\nSome details about the change', tags))
@@ -3003,7 +3085,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
-            '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= ci master\n',
+            '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_specific_variables(self):
@@ -3016,7 +3099,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
-            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 ci master\n',
+            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_no_ci_flag(self):
@@ -3029,7 +3113,8 @@ class TestUmanCI(TestBase):
         self.assertEqual(0, res)
         self.assertEqual(
             'git push -o ci.variable=SUITES=0 -o ci.variable=PYTEST=0 '
-            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= ci master\n',
+            '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= '
+            '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
 
     def test_ci_custom_remote(self):
@@ -3923,6 +4008,25 @@ class TestGitLabParser(TestBase):
         # Invalid value should not be in roles
         self.assertNotIn('definitely_invalid_role_12345', parser.roles)
 
+    def test_validate_sage_value(self):
+        """Test SAGE value validation with class"""
+        parser = gitlab_parser.GitLabCIParser()
+
+        # Special values are always valid
+        self.assertTrue(control.validate_sage_value('1', parser))
+        self.assertTrue(control.validate_sage_value('', parser))
+        self.assertTrue(control.validate_sage_value('help', parser))
+
+        # Real sage job (if any) is valid
+        if parser.sage_names:
+            self.assertTrue(
+                control.validate_sage_value(parser.sage_names[0], parser))
+
+        # Bogus job name is not valid
+        self.assertFalse(
+            control.validate_sage_value(
+                'definitely_invalid_sage_job_xyz', parser))
+
     def test_validate_pytest_value(self):
         """Test pytest value validation with class"""
         parser = gitlab_parser.GitLabCIParser()
@@ -3963,6 +4067,63 @@ class TestGitLabParser(TestBase):
         self.assertEqual(parser1.roles, parser2.roles)
         self.assertEqual(parser1.boards, parser2.boards)
         self.assertEqual(parser1.job_names, parser2.job_names)
+
+    def test_find_gitlab_ci_file_cwd(self):
+        """Test that find_gitlab_ci_file() checks the current directory"""
+        old_cwd = os.getcwd()
+        orig_usrc = os.environ.get('USRC')
+        try:
+            if 'USRC' in os.environ:
+                del os.environ['USRC']
+            os.chdir(self.test_dir)
+
+            # Create a fake .gitlab-ci.yml in the current directory
+            ci_file = os.path.join(self.test_dir, '.gitlab-ci.yml')
+            with open(ci_file, 'w', encoding='utf-8') as fout:
+                fout.write('test:\n  script: echo hello\n')
+
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertEqual(ci_file, result)
+        finally:
+            os.chdir(old_cwd)
+            if orig_usrc is not None:
+                os.environ['USRC'] = orig_usrc
+            elif 'USRC' in os.environ:
+                del os.environ['USRC']
+
+    def test_find_gitlab_ci_file_usrc(self):
+        """Test that find_gitlab_ci_file() checks $USRC"""
+        old_cwd = os.getcwd()
+        orig_usrc = os.environ.get('USRC')
+        try:
+            # cd somewhere with no .gitlab-ci.yml nearby
+            empty_dir = os.path.join(self.test_dir, 'empty')
+            os.makedirs(empty_dir)
+            os.chdir(empty_dir)
+
+            # Create a fake .gitlab-ci.yml in a separate directory
+            src_dir = os.path.join(self.test_dir, 'src')
+            os.makedirs(src_dir)
+            ci_file = os.path.join(src_dir, '.gitlab-ci.yml')
+            with open(ci_file, 'w', encoding='utf-8') as fout:
+                fout.write('test:\n  script: echo hello\n')
+
+            # Without USRC, should not find it
+            if 'USRC' in os.environ:
+                del os.environ['USRC']
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertIsNone(result)
+
+            # With USRC pointing to src_dir, should find it
+            os.environ['USRC'] = src_dir
+            result = gitlab_parser.find_gitlab_ci_file()
+            self.assertEqual(ci_file, result)
+        finally:
+            os.chdir(old_cwd)
+            if orig_usrc is not None:
+                os.environ['USRC'] = orig_usrc
+            elif 'USRC' in os.environ:
+                del os.environ['USRC']
 
 
 class TestUmanMergeRequest(TestBase):
@@ -4181,6 +4342,54 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         args = cmdline.parse_args(['cc', '-s'])
         self.assertTrue(args.shell)
 
+    def test_cc_parsing_ssh(self):
+        """Test cc --ssh flag parses a host or user@host argument"""
+        args = cmdline.parse_args(['cc', '--ssh', 'remotebox'])
+        self.assertEqual('remotebox', args.ssh)
+
+        args = cmdline.parse_args(['cc', 'mybox', '--ssh', 'alice@host.lan'])
+        self.assertEqual('mybox', args.name)
+        self.assertEqual('alice@host.lan', args.ssh)
+
+        args = cmdline.parse_args(['cc'])
+        self.assertIsNone(args.ssh)
+
+    def test_setup_ssh_access_defaults_to_current_user(self):
+        """Test setup_ssh_access prepends current user when target has no '@'"""
+        calls = []
+
+        def fake_lxc_exec(name, cmd, dry_run=False, user=None):
+            calls.append(('lxc_exec', name, cmd, user))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        def fake_exec_cmd(cmd, dry_run, capture=False):  # pylint: disable=unused-argument
+            calls.append(('exec_cmd', cmd))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        with mock.patch.object(cc, 'lxc_exec', side_effect=fake_lxc_exec):
+            with mock.patch.object(cc, 'exec_cmd', side_effect=fake_exec_cmd):
+                with mock.patch.object(cc.getpass, 'getuser',
+                                       return_value='simon'):
+                    with mock.patch.object(cc.socket_mod, 'gethostbyname',
+                                           return_value='10.0.0.5'):
+                        with terminal.capture():
+                            rc = cc.setup_ssh_access('mybox', 'host.lan')
+        self.assertEqual(0, rc)
+        # The ssh-copy-id call should target simon@host.lan
+        copy_call = next(c for c in calls if c[0] == 'exec_cmd')
+        self.assertIn('simon@host.lan', copy_call[1])
+        # The /etc/hosts entry should be added by an lxc_exec call
+        hosts_calls = [c for c in calls if c[0] == 'lxc_exec'
+                       and '/etc/hosts' in c[2]]
+        self.assertEqual(1, len(hosts_calls))
+        self.assertIn('10.0.0.5 host.lan', hosts_calls[0][2])
+        # The ~/.ssh/config entry should declare User simon for host.lan
+        config_calls = [c for c in calls if c[0] == 'lxc_exec'
+                        and '.ssh/config' in c[2]]
+        self.assertEqual(1, len(config_calls))
+        self.assertIn('Host host.lan', config_calls[0][2])
+        self.assertIn('User simon', config_calls[0][2])
+
     def test_cc_parsing_base(self):
         """Test cc -b flag"""
         args = cmdline.parse_args(['cc', '-b', 'jammy'])
@@ -4260,6 +4469,17 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         datadir = [m for m in mounts if m[0] == 'datadir'][0]
         self.assertEqual('/tmp/myproject', datadir[1])
         self.assertEqual(cc.PROJECT_DEST, datadir[2])
+
+    def test_is_uman_project(self):
+        """Test is_uman_project detects the uman tree by uman_pkg/__init__.py"""
+        # Not uman: an empty directory
+        self.assertFalse(cc.is_uman_project(self.test_dir))
+
+        # Mark it as uman by creating uman_pkg/__init__.py
+        pkg_dir = os.path.join(self.test_dir, 'uman_pkg')
+        os.makedirs(pkg_dir)
+        tools.write_file(os.path.join(pkg_dir, '__init__.py'), b'')
+        self.assertTrue(cc.is_uman_project(self.test_dir))
 
     def test_get_config_mounts_no_section(self):
         """Test get_config_mounts with no [claude-code] section"""
@@ -4453,8 +4673,13 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         orig_expanduser = os.path.expanduser
         os.path.expanduser = lambda p: p.replace('~', self.test_dir)
         try:
-            with terminal.capture() as (out, _):
-                cc.run(args)
+            # Force is_uman_project False so /tmp/b isn't auto-mounted by
+            # the uman-tree heuristic; this test runs from inside the
+            # uman source tree.
+            with mock.patch.object(cc, 'is_uman_project',
+                                   return_value=False):
+                with terminal.capture() as (out, _):
+                    cc.run(args)
             output = out.getvalue()
             self.assertIn('lxc init', output)
             self.assertIn('lxc start', output)
@@ -4817,6 +5042,34 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
             self.assertTrue(os.path.isdir(os.path.dirname(path)))
         finally:
             os.path.expanduser = orig_expanduser
+
+    def test_ensure_running_failure(self):
+        """Test ensure_running reports an error when 'lxc start' fails"""
+        bad = command.CommandResult(return_code=1, stdout='',
+                                    stderr='Error: bad mount\n')
+        with mock.patch.object(cc, 'lxc', return_value=bad):
+            with terminal.capture() as (_, err):
+                self.assertFalse(cc.ensure_running('foo', existed=False))
+        self.assertIn('Failed to start', err.getvalue())
+
+    def test_ensure_running_success(self):
+        """Test ensure_running returns True when start succeeds"""
+        good = command.CommandResult(return_code=0, stdout='', stderr='')
+        with mock.patch.object(cc, 'lxc', return_value=good):
+            self.assertTrue(cc.ensure_running('foo', existed=False))
+
+    def test_wait_for_user_timeout(self):
+        """Test wait_for_user times out instead of looping forever"""
+        bad = command.CommandResult(return_code=1, stdout='',
+                                    stderr='Error: container not running')
+        with mock.patch.object(cc, 'exec_cmd', return_value=bad):
+            with mock.patch.object(cc.time, 'sleep'):
+                with mock.patch.object(cc.time, 'time',
+                                       side_effect=[0, 1, 2, 999]):
+                    with terminal.capture() as (_, err):
+                        self.assertFalse(
+                            cc.wait_for_user('foo', timeout=10))
+        self.assertIn('Timed out', err.getvalue())
 
 
 @unittest.skipUnless(shutil.which('lxc'), 'LXC not available')
@@ -5760,6 +6013,36 @@ Result: SKIP dm_test_fourth
         self.assertEqual(1, res.failed)
         self.assertEqual(0, res.skipped)
 
+    def test_parse_results_leak_detail(self):
+        """Test parse_results counts real leak-detail lines"""
+        # Real leak detail: <addr> <size-hex> <caller>
+        output = (
+            'Test: my_test\n'
+            'Leak: 1 alloc\n'
+            '  169f5668  1000a0  sandbox_mmc_probe:194\n'
+            'Result: PASS my_test\n'
+        )
+        res = cmdtest.parse_results(output)
+        self.assertEqual(1, res.leaked)
+        self.assertEqual(0x1000a0, res.leak_bytes)
+
+    def test_parse_results_leak_detail_false_match(self):
+        """Test parse_results ignores non-leak lines that look hex-ish"""
+        # Lines from rsvmem, GPT partition dumps, host info -- these
+        # previously matched the regex and inflated the leak total
+        output = (
+            'Test: fdt_rsvmem\n'
+            '      0    0000000000074656    0000000000000009\n'
+            '      1    0000000000001234    0000000000005678\n'
+            '165  fd 42 d1 6a 20 30 27 98\n'
+            '  3x 24.2K  1  Basic data\n'
+            '  2x 32.3K  512 test2  /tmp/b/x/2MB.ext2.img\n'
+            'Result: PASS fdt_rsvmem\n'
+        )
+        res = cmdtest.parse_results(output)
+        self.assertEqual(0, res.leaked)
+        self.assertEqual(0, res.leak_bytes)
+
     def test_parse_legacy_results_show_results(self):
         """Test parse_legacy_results with show_results flag"""
         output = '''
@@ -5813,7 +6096,9 @@ Result: PASS dm_test_second
         self.assertFalse(err.getvalue())
         stdout = out.getvalue()
         self.assertIn('2 passed', stdout)
-        self.assertIn('0 failed', stdout)
+        # Zero counts are omitted from the summary
+        self.assertNotIn('failed', stdout)
+        self.assertNotIn('skipped', stdout)
 
     def test_run_tests_shows_output_when_no_results(self):
         """Test run_tests shows output when no results detected"""
@@ -5987,6 +6272,27 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
         self.assertEqual(1, prog.failed)
         self.assertEqual(0, prog.skipped)
 
+    def test_progress_switches_to_result_when_seen(self):
+        """Test Progress switches from Test: to Result: counts on first hit
+
+        For older U-Boot trees has_emit_result() may be False, but the
+        framework can still emit Result: lines. When that happens, we
+        should drop the Test:-line counts and rely on Result: lines so
+        the live progress matches the final summary.
+        """
+        prog = cmdtest.Progress(emit_result=False)
+        # Several Test: lines arrive first (older-style live output)
+        prog.update(None, b'Test: a\nTest: b\nTest: c\n')
+        # First Result: line appears -- counts should reset to 0 and start
+        # tracking Result: lines instead
+        prog.update(None,
+                    b'Result: PASS a\nResult: PASS b\nResult: FAIL c\n')
+        prog.finish()
+        self.assertEqual(2, prog.passed)
+        self.assertEqual(1, prog.failed)
+        self.assertEqual(0, prog.skipped)
+        self.assertTrue(prog.has_result)
+
     def test_progress_partial_lines(self):
         """Test Progress handles data split across chunks"""
         prog = cmdtest.Progress(emit_result=True)
@@ -6112,6 +6418,39 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
 
         self.assertEqual([], resolved)
         self.assertEqual([(None, 'nonexistent')], unmatched)
+
+    def test_resolve_specs_partial_across_suites(self):
+        """Test partial-name matching returns actual tests, not glob
+
+        Bug: 'efi' previously generated patterns like 'bootstd_test_efi*'
+        which excluded tests that contain 'efi' but don't start with the
+        prefix (e.g. 'bootstd_test_bootflow_efi'). Resolve should return
+        the actual matching test names instead.
+        """
+        all_tests = [
+            ('bootstd', 'bootstd_test_bootflow_efi'),
+            ('bootstd', 'bootstd_test_other'),
+            ('common', 'common_test_efidebug'),
+            ('efi_unicoll', 'efi_unicoll_test_a'),
+            ('efi_unicoll', 'efi_unicoll_test_b'),
+            ('dm', 'test_acpi'),
+        ]
+
+        with mock.patch.object(cmdtest, 'get_tests_from_nm',
+                               return_value=all_tests):
+            resolved, unmatched = cmdtest.resolve_specs(
+                '/path/to/sandbox', [('efi', None)])
+
+        # All four tests with 'efi' in their name (or in their suite name)
+        # should be returned with their full test names
+        expected = [
+            ('bootstd', 'bootstd_test_bootflow_efi'),
+            ('common', 'common_test_efidebug'),
+            ('efi_unicoll', 'efi_unicoll_test_a'),
+            ('efi_unicoll', 'efi_unicoll_test_b'),
+        ]
+        self.assertEqual(expected, resolved)
+        self.assertEqual([], unmatched)
 
     def test_validate_specs_all(self):
         """Test validate_specs accepts 'all' without checking"""
@@ -6606,7 +6945,8 @@ class TestExt4l:
         self.assertEqual(0, ret)
         output = out.getvalue()
         self.assertIn('1 passed', output)
-        self.assertIn('0 failed', output)
+        # Zero counts are omitted from the summary
+        self.assertNotIn('failed', output)
         self.assertNotIn('Test output', output)
 
         # Test with FAIL result - output shown
@@ -6674,7 +7014,8 @@ test_fs.py::TestFs::test_ext4
 
         with mock.patch('subprocess.Popen', mock_popen):
             args = argparse.Namespace(board='sandbox', build_dir=None,
-                                      lto=False, flattree_too=False, output_dir=None)
+                                      lto=False, test_spec=None,
+                                      flattree_too=False, output_dir=None)
             env = {}
             tests = ['tests/test_ut.py::test_ut[ut_dm_foo]',
                      'tests/test_ut.py::test_ut[ut_dm_bar]']
@@ -6685,7 +7026,7 @@ test_fs.py::TestFs::test_ext4
         self.assertIn('-k', captured_cmd)
         idx = captured_cmd.index('-k')
         spec = captured_cmd[idx + 1]
-        self.assertEqual('ut_dm_foo or ut_dm_bar or ut_dm_target', spec)
+        self.assertEqual('(ut_dm_foo or ut_dm_bar or ut_dm_target)', spec)
 
     def test_node_to_name(self):
         """Test node_to_name extracts test name from node ID"""
@@ -6712,7 +7053,8 @@ test_fs.py::TestFs::test_ext4
         with mock.patch('subprocess.Popen', mock_popen):
             with mock.patch.object(settings, 'get', return_value='/tmp/b'):
                 args = argparse.Namespace(board='sandbox', build_dir=None,
-                                          lto=False, flattree_too=False, output_dir=None)
+                                          lto=False, test_spec=None,
+                                          flattree_too=False, output_dir=None)
                 cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertIn('--build-dir', captured_cmd)
@@ -6773,7 +7115,8 @@ test_fs.py::TestFs::test_ext4
         with mock.patch('subprocess.Popen', mock_popen):
             with mock.patch('uman_pkg.cmdpy.has_no_full', return_value=True):
                 args = argparse.Namespace(board='sandbox', build_dir=None,
-                                          lto=False, flattree_too=False, output_dir=None)
+                                          lto=False, test_spec=None,
+                                          flattree_too=False, output_dir=None)
                 cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertIn('--no-full', captured_cmd)
@@ -6791,7 +7134,8 @@ test_fs.py::TestFs::test_ext4
 
         with mock.patch('subprocess.Popen', mock_popen):
             args = argparse.Namespace(board='sandbox', build_dir=None,
-                                      lto=False, flattree_too=True, output_dir=None)
+                                      lto=False, test_spec=None,
+                                      flattree_too=True, output_dir=None)
             cmdpy.pollute_run([], 'test_target', args, {})
 
         self.assertNotIn('--no-full', captured_cmd)
@@ -6924,6 +7268,106 @@ class TestPytestHooks(TestBase):
 
         self.assertEqual('qemu', result['console_impl'])
         self.assertEqual('qemu-system-arm', result['qemu_binary'])
+
+
+class TestPytestId(TestBase):
+    """Tests for --id flag and PYTHONPATH setup"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.WARNING)
+
+    @mock.patch('uman_pkg.cmdpy.settings')
+    def test_pytest_env_id_pythonpath(self, mock_settings):
+        """Test that pytest_env() adds hooks to PYTHONPATH when id is set"""
+        mock_settings.get.return_value = None
+
+        # Create the hooks directory
+        hooks_py = os.path.join(self.test_dir, 'test/hooks/py/travis-ci')
+        os.makedirs(hooks_py)
+        # Also need test/hooks/bin for the PATH setup
+        os.makedirs(os.path.join(self.test_dir, 'test/hooks/bin/travis-ci'))
+
+        with mock.patch.object(cmdpy, 'get_uboot_dir',
+                               return_value=self.test_dir):
+            # Without id, no PYTHONPATH
+            env = cmdpy.pytest_env('sandbox')
+            self.assertNotIn('PYTHONPATH', env)
+
+            # With id, hooks dir added to PYTHONPATH
+            env = cmdpy.pytest_env('sandbox', test_py_id='na')
+            self.assertIn('PYTHONPATH', env)
+            self.assertIn(hooks_py, env['PYTHONPATH'])
+
+    @mock.patch('uman_pkg.cmdpy.settings')
+    def test_pytest_env_tools_pythonpath(self, mock_settings):
+        """Test that pytest_env() adds tools/ to PYTHONPATH for u_boot_pylib"""
+        mock_settings.get.return_value = None
+
+        tools_dir = os.path.join(self.test_dir, 'tools')
+        os.makedirs(tools_dir)
+        os.makedirs(os.path.join(self.test_dir, 'test/hooks/bin/travis-ci'))
+
+        with mock.patch.object(cmdpy, 'get_uboot_dir',
+                               return_value=self.test_dir):
+            # tools/ is added even without --id
+            env = cmdpy.pytest_env('sandbox')
+            self.assertIn('PYTHONPATH', env)
+            self.assertIn(tools_dir, env['PYTHONPATH'])
+
+            # With --id, hooks dir is listed before tools/
+            hooks_py = os.path.join(self.test_dir,
+                                    'test/hooks/py/travis-ci')
+            os.makedirs(hooks_py)
+            env = cmdpy.pytest_env('sandbox', test_py_id='na')
+            parts = env['PYTHONPATH'].split(':')
+            self.assertEqual([hooks_py, tools_dir], parts[:2])
+
+
+class TestPytestSpec(TestBase):
+    """Tests for pytest test-spec handling"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.WARNING)
+
+    def _build_args(self, test_spec=None):
+        return make_args(
+            cmd='pytest', board='qemu_arm64_spl',
+            test_spec=test_spec or [], build=False, output_dir=None,
+            test_py_id=None, why_skip=False,
+            quiet=False, show_output=False, no_timeout=False,
+            setup_only=False, persist=False, gdb_phase=None, gdbserver=None,
+            timing=None, exitfirst=False, malloc_dump=None, leak_check=False,
+            show_leaks=10, flattree_too=False)
+
+    def test_user_spec_overrides_gitlab(self):
+        """Test that a user-supplied -t spec replaces the gitlab default"""
+        with mock.patch.object(cmdpy, 'get_board_test_spec',
+                               return_value='test_passage'):
+            with mock.patch.object(cmdpy, 'get_board_test_id',
+                                   return_value='qemu'):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    args = self._build_args(test_spec=['help'])
+                    cmd = cmdpy.build_pytest_cmd(args)
+        self.assertIn('-k', cmd)
+        spec = cmd[cmd.index('-k') + 1]
+        self.assertEqual('help', spec)
+
+    def test_no_user_spec_uses_gitlab(self):
+        """Test that gitlab spec is used when user provides no -t"""
+        with mock.patch.object(cmdpy, 'get_board_test_spec',
+                               return_value='test_passage'):
+            with mock.patch.object(cmdpy, 'get_board_test_id',
+                                   return_value='qemu'):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    args = self._build_args()
+                    cmd = cmdpy.build_pytest_cmd(args)
+        self.assertIn('-k', cmd)
+        spec = cmd[cmd.index('-k') + 1]
+        self.assertEqual('(test_passage)', spec)
 
 
 class TestDockerTest(TestBase):

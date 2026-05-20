@@ -142,11 +142,12 @@ def ensure_hooks_host(hooks_bin):
         tout.notice(f'Created symlink {host_dir} -> {HOOKS_FALLBACK}')
 
 
-def pytest_env(board):
+def pytest_env(board, test_py_id=None):
     """Set up environment variables for pytest testing
 
     Args:
         board (str): Board name
+        test_py_id (str or None): TEST_PY_ID override, or None for default
 
     Returns:
         dict: Environment variables that were set (not the full environment)
@@ -164,6 +165,25 @@ def pytest_env(board):
 
     # Local hooks from U-Boot tree take precedence
     uboot_dir = get_uboot_dir()
+
+    # Build PYTHONPATH so test modules can import from the U-Boot tree:
+    # tools/ for u_boot_pylib, and the hooks dir for boardenv files when
+    # --id is in use.
+    pythonpath_parts = []
+    if uboot_dir:
+        tools_dir = os.path.join(uboot_dir, 'tools')
+        if os.path.isdir(tools_dir):
+            pythonpath_parts.append(tools_dir)
+        if test_py_id:
+            hooks_py = os.path.join(uboot_dir, 'test/hooks/py/travis-ci')
+            if os.path.exists(hooks_py):
+                pythonpath_parts.insert(0, hooks_py)
+    if pythonpath_parts:
+        current = os.environ.get('PYTHONPATH', '')
+        if current:
+            pythonpath_parts.append(current)
+        env['PYTHONPATH'] = ':'.join(pythonpath_parts)
+
     if uboot_dir:
         local_hooks = os.path.join(uboot_dir, 'test/hooks/bin')
         if os.path.exists(local_hooks):
@@ -494,21 +514,21 @@ def build_pytest_cmd(args):
 
     cmd.append('--buildman')
 
-    board_id = get_board_test_id(args.board)
+    board_id = args.test_py_id or get_board_test_id(args.board)
     cmd.extend(['--id', board_id])
 
-    # Build test spec from user args and gitlab defaults
+    # Build test spec: user args take precedence over gitlab defaults
     spec_parts = []
     if args.test_spec:
         # Convert Class:method or Class::method to "Class and method" for -k
         spec = ' '.join(args.test_spec)
         spec = spec.replace('::', ' and ').replace(':', ' and ')
         spec_parts.append(spec)
-
-    # Add gitlab TEST_PY_TEST_SPEC as default filter
-    gitlab_spec = get_board_test_spec(args.board)
-    if gitlab_spec:
-        spec_parts.append(f'({gitlab_spec})')
+    else:
+        # Fall back to gitlab TEST_PY_TEST_SPEC if no user spec given
+        gitlab_spec = get_board_test_spec(args.board)
+        if gitlab_spec:
+            spec_parts.append(f'({gitlab_spec})')
 
     if spec_parts:
         cmd.extend(['-k', ' and '.join(spec_parts)])
@@ -532,6 +552,8 @@ def build_pytest_cmd(args):
         'localhost:1234' if args.gdb_phase else None)
     if gdb_channel:
         cmd.extend(['--gdbserver', gdb_channel])
+    if args.why_skip:
+        cmd.append('-rs')
     if args.exitfirst:
         cmd.append('-x')
     if not args.flattree_too and has_no_full():
@@ -1079,7 +1101,13 @@ def gdb_monitor(gdb_cmd, channel):
                     break
                 if not data:
                     break
-                os.write(master_fd, data)
+                # Translate Ctrl-C to SIGINT for gdb's process group,
+                # since raw mode disables ISIG on both sides of the pty
+                if b'\x03' in data:
+                    os.killpg(proc.pid, signal.SIGINT)
+                    data = data.replace(b'\x03', b'')
+                if data:
+                    os.write(master_fd, data)
 
             if master_fd in rlist:
                 try:
@@ -1176,9 +1204,15 @@ def collect_tests(args):
     if not args.flattree_too and has_no_full():
         cmd.append('--no-full')
 
+    spec_parts = []
     if args.test_spec:
-        spec = ' '.join(args.test_spec)
-        cmd.extend(['-k', spec])
+        spec_parts.append(f"({' '.join(args.test_spec)})")
+    else:
+        gitlab_spec = get_board_test_spec(args.board)
+        if gitlab_spec:
+            spec_parts.append(f'({gitlab_spec})')
+    if spec_parts:
+        cmd.extend(['-k', ' and '.join(spec_parts)])
 
     result = command.run_pipe([cmd], capture=True, capture_stderr=True,
                               raise_on_error=False)
@@ -1271,7 +1305,13 @@ def pollute_run(tests, target, args, env):
     # Convert node IDs to test names and join with "or" for -k
     all_tests = tests + [target]
     names = [node_to_name(t) for t in all_tests]
-    spec = ' or '.join(names)
+    spec_parts = [f"({' or '.join(names)})"]
+    if args.test_spec:
+        spec_parts.append(f"({' '.join(args.test_spec)})")
+    gitlab_spec = get_board_test_spec(args.board)
+    if gitlab_spec:
+        spec_parts.append(f'({gitlab_spec})')
+    spec = ' and '.join(spec_parts)
 
     cmd = ['./test/py/test.py', '-B', args.board, '--build-dir', build_dir,
            '--buildman', '--id', 'na', '-q', '-k', spec]
@@ -1322,17 +1362,16 @@ def do_pollute(args):
     if uboot_dir != os.getcwd():
         os.chdir(uboot_dir)
 
-    # Build to the pollute directory if requested
-    if args.build:
-        base_dir = settings.get('build_dir', '/tmp/b')
-        build_dir = f'{base_dir}/{args.board}-pollute'
-        tout.notice(f'Building to {build_dir}...')
-        cmd = [build_mod.get_buildman()] + build_mod.base_bm_args(
-            args.board, build_dir, args.lto)
-        result = exec_cmd(cmd, args.dry_run, capture=False)
-        if result and result.return_code != 0:
-            tout.error('Build failed')
-            return 1
+    # Ensure the pollute build is current (incremental, fast for no-op)
+    base_dir = settings.get('build_dir', '/tmp/b')
+    build_dir = args.output_dir or f'{base_dir}/{args.board}-pollute'
+    tout.notice(f'Building to {build_dir}...')
+    cmd = [build_mod.get_buildman()] + build_mod.base_bm_args(
+        args.board, build_dir, args.lto)
+    result = exec_cmd(cmd, args.dry_run, capture=False)
+    if result and result.return_code != 0:
+        tout.error('Build failed')
+        return 1
 
     tout.notice('Collecting tests...')
     tests = collect_tests(args)
@@ -1381,7 +1420,38 @@ def do_pollute(args):
         return 1
     tout.notice('  FAIL (confirmed)')
 
-    # Binary search
+    if args.pollute_algo == 'linear':
+        polluters = pollute_linear(candidates, target, args, env)
+    elif args.pollute_algo == 'ddmin':
+        polluters = pollute_ddmin(candidates, target, args, env)
+    else:
+        polluters = pollute_bisect(candidates, target, args, env)
+    if polluters is None:
+        return 1
+
+    target_name = node_to_name(target)
+    red = '\033[31m'
+    reset = '\033[0m'
+    names = [node_to_name(p) for p in polluters]
+    if len(polluters) == 1:
+        tout.notice(
+            f'\nFound: {target_name} polluted by {red}{names[0]}{reset}')
+    else:
+        tout.notice(
+            f'\nFound: {target_name} polluted by {len(polluters)} tests:')
+        for name in names:
+            tout.notice(f'  {red}{name}{reset}')
+    spec = ' or '.join(names + [node_to_name(target)])
+    tout.notice(f'  Run: uman py -B {args.board} "{spec}"')
+    return 0
+
+
+def pollute_bisect(candidates, target, args, env):
+    """Binary-search for a single polluter
+
+    Returns:
+        list or None: List of polluters (one test), or None on failure
+    """
     steps = math.ceil(math.log2(len(candidates))) if candidates else 0
     step = 0
 
@@ -1401,7 +1471,7 @@ def do_pollute(args):
 
     if not candidates:
         tout.error('No polluter found - may need multiple tests to trigger')
-        return 1
+        return None
 
     polluter = candidates[0]
 
@@ -1409,18 +1479,101 @@ def do_pollute(args):
     print(f'  Verifying {node_to_name(polluter)}...')
     if pollute_run([polluter], target, args, env):
         tout.notice('  -> FAIL (confirmed)')
-    else:
-        tout.notice('  -> PASS (inconclusive - may need multiple tests)')
-        return 1
-
-    polluter_name = node_to_name(polluter)
-    target_name = node_to_name(target)
-    red = '\033[31m'
-    reset = '\033[0m'
+        return [polluter]
     tout.notice(
-        f'\nFound: {target_name} polluted by {red}{polluter_name}{reset}')
-    tout.notice(f'  Run: uman py -B {args.board} "{polluter} or {target}"')
-    return 0
+        '  -> PASS (inconclusive - try --pollute-algo linear for '
+        'multi-test pollution)')
+    return None
+
+
+def pollute_linear(candidates, target, args, env):
+    """Grow the suffix of candidates until the target fails
+
+    Starts with just the target, then adds candidates[-1], then
+    candidates[-2:], etc. The first suffix that reproduces the
+    failure is the minimal set of prior tests needed.
+
+    Returns:
+        list or None: List of polluters, or None on failure
+    """
+    tout.notice(
+        f'Linear search: growing suffix from target ({len(candidates)} '
+        f'candidates)...')
+    for k in range(1, len(candidates) + 1):
+        suffix = candidates[-k:]
+        print(f'  Step {k}/{len(candidates)}: {k} tests...')
+        if pollute_run(suffix, target, args, env):
+            tout.notice(f'  -> FAIL (minimal window: {k} tests)')
+            return suffix
+        tout.notice('  -> PASS')
+    tout.error('No suffix reproduces the failure')
+    return None
+
+
+def pollute_ddmin(candidates, target, args, env):
+    """Delta debugging to find a 1-minimal subset of polluters
+
+    Finds a subset S of `candidates` such that S + target fails, and
+    removing any single test from S makes it pass. This is the
+    minimal set of tests that together cause the pollution.
+
+    Returns:
+        list or None: 1-minimal subset, or None if nothing reproduces
+    """
+    cur = list(candidates)
+    n = 2
+    run = 0
+
+    tout.notice(f'Delta debugging {len(cur)} candidates...')
+    while len(cur) >= 2:
+        chunk_size = max(len(cur) // n, 1)
+        chunks = [cur[i:i + chunk_size]
+                  for i in range(0, len(cur), chunk_size)]
+
+        # Phase 1: try each chunk alone (reduces fast if it fails)
+        reduced = False
+        for i, chunk in enumerate(chunks):
+            if len(chunk) == len(cur):
+                continue
+            run += 1
+            print(f'  Run {run}: chunk {i + 1}/{len(chunks)} '
+                  f'({len(chunk)} tests)...')
+            if pollute_run(chunk, target, args, env):
+                tout.notice(f'  -> FAIL (reduced to {len(chunk)})')
+                cur = chunk
+                n = 2
+                reduced = True
+                break
+            tout.notice('  -> PASS')
+        if reduced:
+            continue
+
+        # Phase 2: try each complement (chunk removed)
+        for i, chunk in enumerate(chunks):
+            complement = [t for t in cur if t not in chunk]
+            if not complement or len(complement) == len(cur):
+                continue
+            run += 1
+            print(f'  Run {run}: without chunk {i + 1}/{len(chunks)} '
+                  f'({len(complement)} tests)...')
+            if pollute_run(complement, target, args, env):
+                tout.notice(
+                    f'  -> FAIL (removed chunk, reduced to {len(complement)})')
+                cur = complement
+                n = max(n - 1, 2)
+                reduced = True
+                break
+            tout.notice('  -> PASS')
+        if reduced:
+            continue
+
+        # No reduction possible at this granularity; subdivide further
+        if n >= len(cur):
+            break
+        n = min(n * 2, len(cur))
+
+    tout.notice(f'  1-minimal subset: {len(cur)} tests')
+    return cur
 
 
 def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-branches
@@ -1514,7 +1667,11 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
             if cfg not in adjust_cfg:
                 adjust_cfg.append(cfg)
 
-        pytest_vars = pytest_env(args.board)
+        pytest_vars = pytest_env(args.board, args.test_py_id)
+        if args.env:
+            for item in args.env:
+                key, _, val = item.partition('=')
+                pytest_vars[key] = val
         if not build_mod.build_board(
                 args.board, args.dry_run, args.lto,
                 adjust_cfg=adjust_cfg,
@@ -1525,7 +1682,11 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
             return 1
         args.build = False  # Don't build again in pytest
     else:
-        pytest_vars = pytest_env(args.board)
+        pytest_vars = pytest_env(args.board, args.test_py_id)
+        if args.env:
+            for item in args.env:
+                key, _, val = item.partition('=')
+                pytest_vars[key] = val
 
     # Show -G command hint when using -g (not in dry-run mode)
     if args.gdb_phase and not args.gdb and not args.dry_run:

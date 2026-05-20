@@ -254,9 +254,11 @@ def show_summary(passed, failed, skipped, elapsed, leaked=0,
     yellow = col.start(terminal.Color.YELLOW)
     reset = col.stop()
     magenta = col.start(terminal.Color.MAGENTA)
-    parts = [f'{green}{passed} passed{reset}',
-             f'{red}{failed} failed{reset}',
-             f'{yellow}{skipped} skipped{reset}']
+    parts = [f'{green}{passed} passed{reset}']
+    if failed:
+        parts.append(f'{red}{failed} failed{reset}')
+    if skipped:
+        parts.append(f'{yellow}{skipped} skipped{reset}')
     if leaked:
         leak_str = f'{leaked} leaked'
         if leak_bytes:

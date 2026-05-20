@@ -109,6 +109,9 @@ def add_claude_code_subparser(subparsers):
     cc.add_argument('-s', '--shell', nargs='?', const=True,
                     default=False,
                     help='Open shell or run a command in container')
+    cc.add_argument('--ssh', metavar='[USER@]HOST',
+                    help='Set up SSH key access from the container to HOST '
+                    '(generates a keypair if missing and runs ssh-copy-id)')
     return cc
 
 
@@ -137,6 +140,7 @@ def add_ci_subparser(subparsers):
 
     pytest_help = 'Enable PYTEST: to select a particular one: -p help'
     sjg_help = 'Enable SJG_LAB: to select a particular board: -l help'
+    sage_help = 'Enable SAGE_LAB: to select a particular board: -S help'
 
     ci.add_argument('-0', '--null', action='store_true',
                     help='Set all CI vars to 0')
@@ -155,6 +159,8 @@ def add_ci_subparser(subparsers):
     ci.add_argument('-r', '--remote', metavar='REMOTE', default=None,
                     help='Git remote to push to (default: ci_remote setting '
                     "or 'ci')")
+    ci.add_argument('-S', '--sage', nargs='?', const='1', default=None,
+                    help=sage_help)
     ci.add_argument('-s', '--suites', action='store_true',
                     help='Enable SUITES')
     ci.add_argument('-t', '--test-spec', metavar='SPEC',
@@ -265,6 +271,9 @@ def add_build_opts(parser, skip_short=None):
     group.add_argument(
         '--no-trace-early', action='store_true', dest='no_trace_early',
         help='Disable TRACE_EARLY when using -T (use with -b)')
+    group.add_argument(
+        '-e', '--env', action='append', metavar='KEY=VALUE', dest='env',
+        help='Set environment variable for build (use with -b; repeatable)')
 
 
 def add_pytest_subparser(subparsers):
@@ -319,8 +328,21 @@ def add_pytest_subparser(subparsers):
         '--pollute', metavar='TEST',
         help='Find which test pollutes TEST (causes it to fail)')
     pyt.add_argument(
+        '--pollute-algo', choices=['bisect', 'linear', 'ddmin'],
+        default='bisect',
+        help='Pollution search algorithm: bisect (fast, single '
+             'polluter), linear (grow suffix from target), or ddmin '
+             '(delta debugging, finds minimal subset - slowest)')
+    pyt.add_argument(
         '--gdbserver', metavar='CHANNEL', dest='gdbserver',
         help='Run sandbox under gdbserver (e.g., localhost:5555)')
+    pyt.add_argument(
+        '--id', metavar='ID', dest='test_py_id',
+        help='Set TEST_PY_ID and add hooks to PYTHONPATH '
+        '(default: auto-detect from .gitlab-ci.yml)')
+    pyt.add_argument(
+        '--why-skip', action='store_true',
+        help='Show reasons for skipped tests')
     add_build_opts(pyt)
     # extra_args is set by parse_args() when '--' is present
     pyt.set_defaults(extra_args=[])
@@ -368,6 +390,9 @@ def add_build_subparser(subparsers):
                      help='Enable function tracing (FTRACE=1)')
     bld.add_argument('--no-trace-early', action='store_true', dest='no_trace_early',
                      help='Disable TRACE_EARLY when using -T')
+    bld.add_argument('-e', '--env', action='append', metavar='KEY=VALUE',
+                     dest='env',
+                     help='Set environment variable for build (repeatable)')
     bld.add_argument('--bisect', action='store_true',
                      help='Bisect to find first failing commit')
     bld.add_argument('--gprof', action='store_true',

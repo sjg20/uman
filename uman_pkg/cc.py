@@ -8,8 +8,10 @@ This module handles the 'claude-code' subcommand which creates and manages LXC
 containers for running Claude Code.
 """
 
+import getpass
 import os
 import random
+import shlex
 import socket as socket_mod
 import string
 import subprocess
@@ -361,17 +363,76 @@ def add_mount(name, mount_name, source, path, dry_run=False, shift=False):
         dry_run (bool): If True, just show command
         shift (bool): If True, use idmapped mount for uid/gid
             translation so container root can access host-owned files
+
+    Returns:
+        bool: True on success (including no-op when already mounted),
+            False if the source path is missing or the lxc command failed
     """
     if not dry_run and has_mount(name, mount_name):
         if shift:
             lxc('config', 'device', 'set', name, mount_name,
                 'shift', 'true')
-        return
+        return True
+    if not dry_run and not os.path.exists(source):
+        tout.error(f'Source path does not exist: {source}')
+        return False
     args = [f'source={source}', f'path={path}']
     if shift:
         args.append('shift=true')
-    lxc('config', 'device', 'add', '-q', name, mount_name, 'disk',
-        *args, dry_run=dry_run)
+    result = lxc('config', 'device', 'add', '-q', name, mount_name, 'disk',
+                 *args, dry_run=dry_run)
+    if result is None:
+        return True  # dry_run
+    if result.return_code:
+        tout.error(f'Failed to add mount {mount_name!r}: '
+                   f'{(result.stderr or result.stdout).strip()}')
+        return False
+    return True
+
+
+def get_skip_path(name):
+    """Get the per-container skipped-mounts file path"""
+    return os.path.join(os.path.expanduser('~'), '.claude', 'cc', name,
+                        'skipped-mounts')
+
+
+def get_skipped_mounts(name):
+    """Get the set of mount names that should not be auto-added
+
+    Args:
+        name (str): Container name
+
+    Returns:
+        set: Mount names previously removed via `cc -u`
+    """
+    path = get_skip_path(name)
+    if not os.path.exists(path):
+        return set()
+    with open(path, encoding='utf-8') as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def mark_skipped(name, mount_name):
+    """Add a mount name to the per-container skip list"""
+    path = get_skip_path(name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    skipped = get_skipped_mounts(name)
+    skipped.add(mount_name)
+    with open(path, 'w', encoding='utf-8') as f:
+        for mname in sorted(skipped):
+            f.write(f'{mname}\n')
+
+
+def unmark_skipped(name, mount_name):
+    """Remove a mount name from the per-container skip list"""
+    skipped = get_skipped_mounts(name)
+    if mount_name not in skipped:
+        return
+    skipped.discard(mount_name)
+    path = get_skip_path(name)
+    with open(path, 'w', encoding='utf-8') as f:
+        for mname in sorted(skipped):
+            f.write(f'{mname}\n')
 
 
 def remove_mount(name, mount_name, dry_run=False):
@@ -389,26 +450,36 @@ def remove_mount(name, mount_name, dry_run=False):
         tout.error(f'No device {mount_name!r} on container {name}')
         return False
     lxc('config', 'device', 'remove', name, mount_name, dry_run=dry_run)
+    if not dry_run:
+        mark_skipped(name, mount_name)
     return True
 
 
-def wait_for_user(name, dry_run=False):
+def wait_for_user(name, dry_run=False, timeout=60):
     """Wait until the ubuntu user exists in the container
 
     Args:
         name (str): Container name
         dry_run (bool): If True, just show command
+        timeout (int): Seconds to wait before giving up
+
+    Returns:
+        bool: True if the user appeared (or dry-run), False on timeout
     """
     if dry_run:
         tout.notice('# wait for ubuntu user')
-        return
-    while True:
+        return True
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         result = exec_cmd(
             ['lxc', 'exec', name, '--', 'id', '-u', 'ubuntu'],
             dry_run=False)
         if result and result.return_code == 0:
-            break
+            return True
         time.sleep(0.5)
+    tout.error(
+        f"Timed out waiting for 'ubuntu' user in container '{name}'")
+    return False
 
 
 def setup_container(name, dry_run=False):
@@ -729,6 +800,89 @@ def launch_claude(name, cont=False, dry_run=False, log_file=None):
     exec_cmd(cmd, dry_run, capture=False, log_file=log_file)
 
 
+def setup_ssh_access(name, target, dry_run=False):
+    """Set up SSH key access from the container to a remote host
+
+    Generates an ed25519 keypair inside the container if one is not
+    already there, then runs ssh-copy-id to authorise the public key
+    on the remote host. The remote login is interactive so the user
+    can supply the destination password if needed.
+
+    Resolves the host name on the host side and adds an /etc/hosts
+    entry to the container, since the container has its own resolver
+    and may not see the user's local hostnames.
+
+    Args:
+        name (str): Container name
+        target (str): Remote target as HOST or USER@HOST. When USER is
+            omitted the current host user is used
+        dry_run (bool): If True, just show commands
+
+    Returns:
+        int: 0 on success, 1 on failure
+    """
+    if '@' not in target:
+        target = f'{getpass.getuser()}@{target}'
+
+    user, _, host = target.partition('@')
+    if not dry_run:
+        try:
+            ip = socket_mod.gethostbyname(host)
+        except socket_mod.gaierror as exc:
+            tout.error(f"Cannot resolve hostname {host!r} on host: {exc}")
+            return 1
+        if ip != host:
+            quoted_line = shlex.quote(f'{ip} {host}')
+            quoted_pattern = shlex.quote(
+                f'[[:space:]]{host}([[:space:]]|$)')
+            add_host = (
+                f'grep -qE {quoted_pattern} /etc/hosts || '
+                f'echo {quoted_line} >> /etc/hosts'
+            )
+            tout.info(f'Adding {ip} {host} to {name}:/etc/hosts')
+            result = lxc_exec(name, add_host, dry_run=False)
+            if result and result.return_code:
+                tout.error(f"Failed to update /etc/hosts in {name}")
+                return 1
+
+    keygen = (
+        f'mkdir -p {UBUNTU_HOME}/.ssh && chmod 700 {UBUNTU_HOME}/.ssh && '
+        f'[ -f {UBUNTU_HOME}/.ssh/id_ed25519 ] || '
+        f'ssh-keygen -t ed25519 -f {UBUNTU_HOME}/.ssh/id_ed25519 -N ""'
+    )
+    result = lxc_exec(name, keygen, dry_run=dry_run, user='ubuntu')
+    if not dry_run and result and result.return_code:
+        tout.error(f'Failed to generate SSH keypair in {name}')
+        return 1
+
+    # Make 'ssh <host>' use the right user from inside the container
+    config = f'{UBUNTU_HOME}/.ssh/config'
+    entry = shlex.quote(f'\nHost {host}\n    User {user}\n')
+    pattern = shlex.quote(f'^Host[[:space:]]+{host}([[:space:]]|$)')
+    add_config = (
+        f'touch {config} && chmod 600 {config} && '
+        f'grep -qE {pattern} {config} || '
+        f'printf %b {entry} >> {config}'
+    )
+    result = lxc_exec(name, add_config, dry_run=dry_run, user='ubuntu')
+    if not dry_run and result and result.return_code:
+        tout.error(f'Failed to update {config} in {name}')
+        return 1
+
+    tout.notice(f'Copying public key to {target} (password may be required)')
+    copy_cmd = ['lxc', 'exec', name, '--', 'sudo', '-iu', 'ubuntu',
+                'ssh-copy-id',
+                '-i', f'{UBUNTU_HOME}/.ssh/id_ed25519.pub',
+                '-o', 'StrictHostKeyChecking=accept-new',
+                target]
+    result = exec_cmd(copy_cmd, dry_run, capture=False)
+    if not dry_run and result and result.return_code:
+        tout.error(f'ssh-copy-id to {target} failed')
+        return 1
+    tout.notice(f"SSH access from '{name}' to {target} is set up")
+    return 0
+
+
 def stop_container(name, dry_run=False):
     """Stop a running container
 
@@ -805,11 +959,21 @@ def list_containers():
     return containers
 
 
+def is_uman_project(project_src):
+    """Check whether project_src is the uman tree itself
+
+    Returns:
+        bool: True if the path looks like the uman source directory
+    """
+    return os.path.isfile(os.path.join(project_src, 'uman_pkg', '__init__.py'))
+
+
 def add_all_mounts(name, project_src, mount_args=None, output=False,
                    no_output=False, dry_run=False):
     """Add all mounts (essential, git symlink, config, CLI) to a container
 
-    Skips any devices that already exist.
+    Skips any devices that already exist or are on the per-container
+    skip list (mounts the user explicitly removed via `cc -u`).
 
     Args:
         name (str): Container name
@@ -819,25 +983,39 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
         no_output (bool): If True, remove /tmp/b mount
         dry_run (bool): If True, just show commands
     """
+    skipped = get_skipped_mounts(name) if not dry_run else set()
+
+    # Default to mounting /tmp/b when developing uman itself, since the
+    # build_dir setting points there; for other projects keep -o opt-in
+    if not output and not no_output and is_uman_project(project_src):
+        if 'tmpb' not in skipped:
+            output = True
+
+    def maybe_add(mname, source, dest, **kw):
+        if mname in skipped:
+            return
+        add_mount(name, mname, source, dest, dry_run, **kw)
+
     for mname, source, dest in get_essential_mounts(project_src):
-        add_mount(name, mname, source, dest, dry_run)
+        maybe_add(mname, source, dest)
 
     # Per-container projects dir so --continue is scoped correctly
     home = os.path.expanduser('~')
     proj_dir = os.path.join(home, '.claude', 'cc', name)
     os.makedirs(proj_dir, exist_ok=True)
-    add_mount(name, 'claudeproj', proj_dir,
-              f'{UBUNTU_HOME}/.claude/projects', dry_run)
+    maybe_add('claudeproj', proj_dir, f'{UBUNTU_HOME}/.claude/projects')
 
     git_mount = get_git_symlink_mount(project_src)
     if git_mount:
-        add_mount(name, *git_mount, dry_run)
+        maybe_add(*git_mount)
 
     # Mount /tmp/b if requested, or remove if -O
     if output:
         tmp_dir = '/tmp/b'
         os.makedirs(tmp_dir, exist_ok=True)
         new_tmpb = not dry_run and not has_mount(name, 'tmpb')
+        if not dry_run:
+            unmark_skipped(name, 'tmpb')
         add_mount(name, 'tmpb', tmp_dir, '/tmp/b', dry_run)
         if new_tmpb and container_status(name) == 'RUNNING':
             tout.notice(
@@ -849,13 +1027,15 @@ def add_all_mounts(name, project_src, mount_args=None, output=False,
 
     pbuilder = '/var/cache/pbuilder'
     if os.path.isdir(pbuilder):
-        add_mount(name, 'pbuilder', pbuilder, pbuilder, dry_run,
-                  shift=True)
+        maybe_add('pbuilder', pbuilder, pbuilder, shift=True)
 
     for mname, source, dest in get_config_mounts():
-        add_mount(name, mname, source, dest, dry_run)
+        maybe_add(mname, source, dest)
 
+    # Explicit -m args override the skip list (re-mounting clears it)
     for mname, source, dest in get_cli_mounts(mount_args):
+        if not dry_run:
+            unmark_skipped(name, mname)
         add_mount(name, mname, source, dest, dry_run)
 
 
@@ -866,15 +1046,29 @@ def ensure_running(name, existed, dry_run=False):
         name (str): Container name
         existed (bool): Whether the container existed before this run
         dry_run (bool): If True, just show commands
-    """
-    if dry_run or not existed:
-        lxc('start', name, dry_run=dry_run)
-        return
 
-    status = container_status(name)
-    if status != 'RUNNING':
+    Returns:
+        bool: True if the container is (or would be) running, False if
+            'lxc start' failed
+    """
+    if dry_run:
+        lxc('start', name, dry_run=dry_run)
+        return True
+
+    if not existed:
+        result = lxc('start', name)
+    else:
+        status = container_status(name)
+        if status == 'RUNNING':
+            return True
         tout.notice(f'Starting container (was {status})')
-        lxc('start', name)
+        result = lxc('start', name)
+
+    if result and result.return_code:
+        msg = (result.stderr or result.stdout or '').strip()
+        tout.error(f"Failed to start container '{name}': {msg}")
+        return False
+    return True
 
 
 def show_containers():
@@ -963,10 +1157,13 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
         if not args.dry_run and not container_exists(name):
             tout.error(f'Container not found: {name}')
             return 1
+        rc = 0
         for mname, source, dest in get_cli_mounts(args.mount):
-            add_mount(name, mname, source, dest, args.dry_run)
-            tout.notice(f'Mounted {source} -> {dest} ({mname})')
-        return 0
+            if add_mount(name, mname, source, dest, args.dry_run):
+                tout.notice(f'Mounted {source} -> {dest} ({mname})')
+            else:
+                rc = 1
+        return rc
 
     if args.unmount:
         name = args.name or os.path.basename(os.path.realpath(os.getcwd()))
@@ -995,6 +1192,13 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
             return 1
         stop_container(args.name, args.dry_run)
         return 0
+
+    if args.ssh:
+        name = args.name or os.path.basename(os.path.realpath(os.getcwd()))
+        if not args.dry_run and not container_exists(name):
+            tout.error(f'Container not found: {name}')
+            return 1
+        return setup_ssh_access(name, args.ssh, args.dry_run)
 
     dry_run = args.dry_run
 
@@ -1093,7 +1297,8 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
                     'Running in privileged mode (device-mapper enabled)')
 
         tout.progress('Starting container')
-        ensure_running(name, existed, dry_run)
+        if not ensure_running(name, existed, dry_run):
+            return 1
 
         # In privileged mode, uid namespacing is disabled, so the
         # container's ubuntu user (uid 1000) won't match the host uid.
@@ -1113,7 +1318,8 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
 
         # Wait for user and set up (idempotent operations)
         tout.progress('Waiting for container to be ready')
-        wait_for_user(name, dry_run)
+        if not wait_for_user(name, dry_run):
+            return 1
         tout.progress('Configuring container')
         setup_container(name, dry_run)
         tout.progress('Installing packages')

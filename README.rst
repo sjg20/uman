@@ -22,29 +22,38 @@ for quick access.
 Subcommands
 -----------
 
+``build`` (alias: ``b``)
+    Build U-Boot for a given board
+
 ``cc``
     Create a Claude Code container (LXC) for development
 
 ``ci``
     Push current branch to GitLab CI with configurable test stages
 
-``docker`` (alias: ``d``)
-    Run U-Boot tests in the same Docker container used by CI
-
-``pytest`` (alias: ``py``)
-    Run U-Boot's test.py framework with automatic environment setup
-
 ``config`` (alias: ``cfg``)
     Examine U-Boot .config files
 
+``docker`` (alias: ``d``)
+    Run U-Boot tests in the same Docker container used by CI
+
 ``git`` (alias: ``g``)
     Git rebase helpers for interactive rebasing
+
+``pytest`` (alias: ``py``)
+    Run U-Boot's test.py framework with automatic environment setup
 
 ``selftest`` (alias: ``st``)
     Run uman's own test suite
 
 ``setup``
-    Download and build firmware blobs needed for testing (OpenSBI, TF-A, etc.)
+    Install dependencies and tooling needed for U-Boot development:
+    apt packages (gcc, qemu, EFI firmware), firmware blobs (OpenSBI,
+    TF-A), toolchains (xtensa, adi-ldr), QEMU-from-source, git-action
+    symlinks and remote deployment over SSH
+
+``test`` (alias: ``t``)
+    Run U-Boot sandbox tests (the C/Python test suite)
 
 Installation
 ------------
@@ -132,6 +141,7 @@ Some simple examples::
 - ``-p, --pytest [BOARD]``: Enable PYTEST (optionally specify board name)
 - ``-r, --remote REMOTE``: Git remote to push to (default: ``ci_remote``
   setting or ``ci``)
+- ``-S, --sage [NAME]``: Set SAGE_LAB (optionally specify job name)
 - ``-s, --suites``: Enable SUITES
 - ``-t, --test-spec SPEC``: Override test specification (e.g. "not sleep",
   "test_ofplatdata")
@@ -183,8 +193,8 @@ The tool can create GitLab merge requests with automated pipeline creation::
 
     # Create merge request with specific CI stages (tags added automatically)
     uman ci --merge -0        # Adds [skip-suites] [skip-pytest] etc.
-    uman ci --merge --suites  # Adds [skip-pytest] [skip-world] [skip-sjg]
-    uman ci --merge --world   # Adds [skip-suites] [skip-pytest] [skip-sjg]
+    uman ci --merge --suites  # Adds [skip-pytest] [skip-world] [skip-sjg] [skip-sage]
+    uman ci --merge --world   # Adds [skip-suites] [skip-pytest] [skip-sjg] [skip-sage]
 
 **Important**: Merge requests only support stage-level control (which stages
 run), not fine-grained selection of specific boards or test specifications.
@@ -368,6 +378,33 @@ idempotent setup steps.
   if the container is already running, prints a message about restarting
 - ``-P, --no-privileged``: Disable privileged mode (auto-restarts and restores uid)
 - ``-s, --shell [CMD]``: Open interactive shell, or run CMD in container
+- ``--ssh [USER@]HOST``: Set up SSH key access from the container to HOST
+  (see **SSH Key Setup** below)
+
+**SSH Key Setup**:
+
+The ``--ssh`` option lets the container ssh into another machine without
+typing a password every time. For example::
+
+    # Authorise access to 'kea' as the current host user
+    uman cc labgrid --ssh kea
+
+    # Use a specific remote user
+    uman cc labgrid --ssh alice@kea
+
+This:
+
+1. Generates ``~/.ssh/id_ed25519`` inside the container if it is not
+   already present. An existing key is reused.
+2. Resolves the destination hostname on the host (the container has its
+   own resolver and may not see local hostnames) and adds an entry to
+   ``/etc/hosts`` inside the container so ``ssh kea`` works.
+3. Runs ``ssh-copy-id`` from inside the container, prompting once for
+   the destination password to push the public key.
+4. Adds a ``Host`` / ``User`` block to ``~/.ssh/config`` inside the
+   container so ``ssh kea`` uses the right login name automatically.
+
+If USER is omitted, the current host user (``$USER``) is used.
 
 **Console Logging**:
 
@@ -688,6 +725,12 @@ hooks to PATH.
     # Dry run to see command and environment
     uman --dry-run py -B qemu-riscv64
 
+    # Set environment variables for build (e.g. firmware binaries)
+    uman py -B qemu_arm64 -b -e BL31=/path/bl31.bin -e TEE=/path/tee.bin
+
+    # Override TEST_PY_ID (adds hooks to PYTHONPATH for boardenv files)
+    uman py -B qemu_arm64 -b --id qemu test_fw_handoff
+
     # Pass extra arguments to pytest (after --)
     uman py -B sandbox TestFsBasic -- --fs-type ext4
 
@@ -728,6 +771,11 @@ hooks to PATH.
 - ``--pollute TEST``: Find which test pollutes TEST
 - ``-o, --output-dir DIR``: Override build directory (use with -b)
 - ``--gdbserver CHANNEL``: Run sandbox under gdbserver (e.g., localhost:5555)
+- ``-e, --env KEY=VALUE``: Set environment variable for build (use with -b;
+  repeatable)
+- ``--id ID``: Set TEST_PY_ID and add hooks to PYTHONPATH (default:
+  auto-detect from .gitlab-ci.yml)
+- ``--why-skip``: Show reasons for skipped tests (passes -rs to pytest)
 
 **Running C Tests Directly**:
 
@@ -972,6 +1020,7 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
 - ``-T, --trace``: Enable function tracing (FTRACE=1, adds CONFIG_TRACE and
   CONFIG_TRACE_EARLY)
 - ``--no-trace-early``: Disable TRACE_EARLY when using -T
+- ``-e, --env KEY=VALUE``: Set environment variable for build (repeatable)
 
 Setup Subcommand
 ----------------
@@ -992,6 +1041,7 @@ various architectures::
     uman setup opensbi
     uman setup tfa
     uman setup xtensa
+    uman setup adi-ldr
 
     # Create git action symlinks in ~/bin
     uman setup aliases
@@ -1024,6 +1074,10 @@ various architectures::
   ``aarch64-linux-gnu-`` cross-compiler.
 - ``xtensa``: Download Xtensa dc233c toolchain from foss-xtensa releases and
   configure ``~/.buildman``.
+- ``adi-ldr``: Clone and build the ``ldr`` tool for Analog Devices boards
+  using meson inside a Python venv, and create ``arm-linux-gnueabi-ldr`` and
+  ``aarch64-linux-ldr`` symlinks so it matches ``$(CROSS_COMPILE)`` on
+  supported platforms. Add the install dir to ``PATH`` afterwards.
 
 **Installed locations** (configurable in ``~/.uman``):
 
@@ -1031,6 +1085,8 @@ various architectures::
   ``fw_dynamic_rv32.bin`` (32-bit)
 - TF-A: ``~/dev/blobs/tfa/bl1.bin``, ``fip.bin``
 - Xtensa: ``~/dev/blobs/xtensa/2020.07/xtensa-dc233c-elf/``
+- adi-ldr: ``~/dev/adi-adsp-ldr/build/ldr`` (with prefixed symlinks in
+  ``~/dev/adi-adsp-ldr/``)
 
 .. _Configuration:
 
@@ -1123,6 +1179,7 @@ Key findings about GitLab merge request and pipeline creation:
    - ``[skip-pytest]`` - Skip pytest/test.py stages
    - ``[skip-world]`` - Skip world_build stage
    - ``[skip-sjg]`` - Skip sjg-lab stage
+   - ``[skip-sage]`` - Skip sage-lab stage
 
 4. **Recommended Workflow**:
 
