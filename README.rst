@@ -22,29 +22,38 @@ for quick access.
 Subcommands
 -----------
 
+``build`` (alias: ``b``)
+    Build U-Boot for a given board
+
 ``cc``
     Create a Claude Code container (LXC) for development
 
 ``ci``
     Push current branch to GitLab CI with configurable test stages
 
-``docker`` (alias: ``d``)
-    Run U-Boot tests in the same Docker container used by CI
-
-``pytest`` (alias: ``py``)
-    Run U-Boot's test.py framework with automatic environment setup
-
 ``config`` (alias: ``cfg``)
     Examine U-Boot .config files
 
+``docker`` (alias: ``d``)
+    Run U-Boot tests in the same Docker container used by CI
+
 ``git`` (alias: ``g``)
     Git rebase helpers for interactive rebasing
+
+``pytest`` (alias: ``py``)
+    Run U-Boot's test.py framework with automatic environment setup
 
 ``selftest`` (alias: ``st``)
     Run uman's own test suite
 
 ``setup``
-    Download and build firmware blobs needed for testing (OpenSBI, TF-A, etc.)
+    Install dependencies and tooling needed for U-Boot development:
+    apt packages (gcc, qemu, EFI firmware), firmware blobs (OpenSBI,
+    TF-A), toolchains (xtensa, adi-ldr), QEMU-from-source, git-action
+    symlinks and remote deployment over SSH
+
+``test`` (alias: ``t``)
+    Run U-Boot sandbox tests (the C/Python test suite)
 
 Installation
 ------------
