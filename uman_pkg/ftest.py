@@ -482,6 +482,25 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(1, len(trace_indices))
         self.assertEqual('TRACE', cmd[trace_indices[0] + 1])
 
+    def test_build_board_fragments(self):
+        """Test that build_board() passes --fragments to buildman"""
+        cap = []
+
+        def mock_exec_cmd(cmd, dry_run=False, env=None, capture=True):
+            del dry_run, env, capture  # unused
+            cap.append(cmd)
+            return command.CommandResult(return_code=0)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                with terminal.capture():
+                    build.build_board('sandbox',
+                                      fragments='foo.config,bar.config')
+
+        cmd = cap[0]
+        idx = cmd.index('--fragments')
+        self.assertEqual('foo.config,bar.config', cmd[idx + 1])
+
     def test_build_fresh_flag(self):
         """Test -F/--fresh flag"""
         args = cmdline.parse_args(['build', 'sandbox', '-F'])
@@ -565,6 +584,24 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(2, cmd.count('-a'))
         self.assertIn('FOO=y', cmd)
         self.assertIn('BAR=n', cmd)
+
+    def test_build_fragments_option(self):
+        """Test -c/--fragments option"""
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-c', 'foo.config'])
+        self.assertEqual('foo.config', args.fragments)
+
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '--fragments', 'foo.config,bar.config'])
+        self.assertEqual('foo.config,bar.config', args.fragments)
+
+    def test_get_cmd_fragments(self):
+        """Test that --fragments is passed to buildman"""
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-c', 'foo.config,bar.config'])
+        cmd = build.get_cmd(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual(1, cmd.count('--fragments'))
+        self.assertIn('foo.config,bar.config', cmd)
 
     def test_build_in_tree_flag(self):
         """Test -I/--in-tree flag uses -i for buildman"""

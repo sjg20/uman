@@ -999,9 +999,16 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
     # Adjust Kconfig setting
     uman build sandbox -a CONFIG_TRACE
 
+    # Merge Kconfig fragments into the defconfig
+    uman build sandbox -c foo.config,bar.config
+
 **Options**:
 
 - ``-a, --adjust-cfg CFG``: Adjust Kconfig setting (can use multiple times)
+- ``-c, --fragments FRAGS``: Comma-separated Kconfig fragments to merge into
+  the defconfig (passed to buildman; each fragment is found in
+  kernel/configs, arch/<arch>/configs or board/ and merged via
+  merge_config.sh)
 - ``-E, --werror``: Treat warnings as errors (sets KCFLAGS=-Werror)
 - ``--fail-on-warning``: Fail if build produces warnings
 - ``-f, --force-reconfig``: Force reconfiguration

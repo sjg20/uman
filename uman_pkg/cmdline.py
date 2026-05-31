@@ -363,6 +363,9 @@ def add_build_subparser(subparsers):
     bld.add_argument('-a', '--adjust-cfg', action='append', metavar='CFG',
                      dest='adjust_cfg',
                      help='Adjust Kconfig setting (can use multiple times)')
+    bld.add_argument('-c', '--fragments', metavar='FRAGS',
+                     help='Comma-separated Kconfig fragments to merge into '
+                          'the defconfig')
     bld.add_argument('-f', '--force-reconfig', action='store_true',
                      help='Force reconfiguration')
     bld.add_argument('-E', '--werror', action='store_true',

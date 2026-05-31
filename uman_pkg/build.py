@@ -215,12 +215,15 @@ def get_buildman_args(args, board, build_dir):
     if args.adjust_cfg:
         for cfg in args.adjust_cfg:
             bm_args.extend(['-a', cfg])
+    if args.fragments:
+        bm_args.extend(['--fragments', args.fragments])
     return bm_args
 
 
 def build_board(board, dry_run=False, lto=False, adjust_cfg=None,
                 force_reconfig=False, fresh=False, jobs=None, trace=False,
-                trace_early=True, output_dir=None, extra_env=None):
+                trace_early=True, output_dir=None, extra_env=None,
+                fragments=None):
     """Build U-Boot for a board
 
     Args:
@@ -233,6 +236,8 @@ def build_board(board, dry_run=False, lto=False, adjust_cfg=None,
         jobs (int): Number of parallel jobs
         trace (bool): Enable function tracing
         trace_early (bool): Enable TRACE_EARLY when trace is True (default True)
+        fragments (str): Comma-separated Kconfig fragments to merge into the
+            defconfig
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -257,6 +262,8 @@ def build_board(board, dry_run=False, lto=False, adjust_cfg=None,
     if adjust_cfg:
         for cfg in adjust_cfg:
             bm_args.extend(['-a', cfg])
+    if fragments:
+        bm_args.extend(['--fragments', fragments])
 
     env = None
     if extra_env or trace:
