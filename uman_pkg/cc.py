@@ -12,6 +12,7 @@ import getpass
 import os
 import random
 import shlex
+import shutil
 import socket as socket_mod
 import string
 import subprocess
@@ -1145,6 +1146,11 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
     Returns:
         int: Exit code
     """
+    if not args.dry_run and not shutil.which('lxc'):
+        tout.error('lxc not found; LXD is not installed')
+        tout.notice('Run: um setup cc')
+        return 1
+
     if args.list_containers:
         return show_containers()
 

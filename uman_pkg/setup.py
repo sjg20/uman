@@ -8,6 +8,7 @@ This module handles the 'setup' subcommand which downloads and builds
 various firmware components needed for U-Boot testing.
 """
 
+import getpass
 import os
 import shutil
 import tempfile
@@ -25,6 +26,7 @@ from uman_pkg import util
 # Available components for setup command
 SETUP_COMPONENTS = {
     'aliases': 'Create symlinks for git action commands',
+    'cc': 'Install LXD for Claude Code containers (um cc)',
     'remote': 'Deploy uman to a remote machine via SSH',
     'adi-ldr': 'ldr tool for Analog Devices boards',
     'efi': 'QEMU EFI firmware for ARM, ARM64, RISC-V and x86',
@@ -794,6 +796,50 @@ def setup_remote(args):
     return 0
 
 
+def setup_cc(args):
+    """Install LXD so 'um cc' can create Claude Code containers
+
+    Installs the lxd snap, initialises it with a minimal config and adds
+    the current user to the 'lxd' group. The group change needs a fresh
+    login to take effect.
+
+    Args:
+        args (argparse.Namespace): Command line arguments
+
+    Returns:
+        int: Exit code (0 for success, non-zero for failure)
+    """
+    if shutil.which('lxc') and not args.force:
+        tout.notice('LXD already installed')
+        tout.notice('Use --force to re-run initialisation')
+        return 0
+
+    user = getpass.getuser()
+    steps = [
+        (['sudo', 'snap', 'install', 'lxd'], 'Installing LXD'),
+        (['lxd', 'init', '--minimal'], 'Initialising LXD'),
+        (['sudo', 'usermod', '-aG', 'lxd', user],
+         f'Adding {user} to lxd group'),
+    ]
+
+    if args.dry_run:
+        for cmd, _ in steps:
+            tout.notice(f'Would run: {" ".join(cmd)}')
+        return 0
+
+    for cmd, desc in steps:
+        tout.notice(f'{desc}...')
+        result = command.run_pipe([cmd], capture=False, raise_on_error=False)
+        if result.return_code:
+            tout.error(f'{desc} failed')
+            tout.notice(f'Try running manually: {" ".join(cmd)}')
+            return 1
+
+    tout.notice('LXD installed')
+    tout.notice("Log out and back in for the 'lxd' group to take effect")
+    return 0
+
+
 def do_setup(args):
     """Handle setup command - build firmware blobs
 
@@ -820,7 +866,7 @@ def do_setup(args):
         return 0
 
     if args.component == 'all':
-        components = [c for c in SETUP_COMPONENTS if c != 'remote']
+        components = [c for c in SETUP_COMPONENTS if c not in ('remote', 'cc')]
     elif args.component not in SETUP_COMPONENTS:
         tout.error(f'Unknown component: {args.component}')
         tout.notice('Use --list to see available components')
@@ -831,6 +877,7 @@ def do_setup(args):
     # Dispatch table for component setup functions
     setup_funcs = {
         'aliases': lambda: setup_aliases(args),
+        'cc': lambda: setup_cc(args),
         'adi-ldr': lambda: setup_adi_ldr(args),
         'efi': lambda: setup_efi(args),
         'gcc': lambda: setup_gcc(args),

@@ -4777,6 +4777,16 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         self.assertIn('Host host.lan', config_calls[0][2])
         self.assertIn('User simon', config_calls[0][2])
 
+    def test_cc_no_lxc_suggests_setup(self):
+        """Test cc reports missing lxc and points at 'um setup cc'"""
+        args = cmdline.parse_args(['cc', 'mybox'])
+        with mock.patch('uman_pkg.cc.shutil.which', return_value=None):
+            with terminal.capture() as (out, err):
+                rc = cc.run(args)
+        self.assertEqual(1, rc)
+        self.assertIn('lxc not found', err.getvalue())
+        self.assertIn('um setup cc', out.getvalue())
+
     def test_cc_parsing_base(self):
         """Test cc -b flag"""
         args = cmdline.parse_args(['cc', '-b', 'jammy'])
@@ -4982,10 +4992,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
     def test_mount_only(self):
         """Test -m without -s just adds the mount and exits"""
         args = cmdline.parse_args(['cc', '-m', '/opt/data', 'mybox'])
-        with mock.patch.object(cc, 'container_exists', return_value=True):
-            with mock.patch.object(cc, 'add_mount') as mock_add:
-                with terminal.capture() as (out, err):
-                    ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'add_mount') as mock_add:
+                    with terminal.capture() as (out, err):
+                        ret = cc.run(args)
         self.assertEqual(0, ret)
         mock_add.assert_called_once_with(
             'mybox', 'data', '/opt/data', '/opt/data', False)
@@ -4994,11 +5005,12 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
     def test_mount_only_no_container(self):
         """Test -m fails if the container does not exist"""
         args = cmdline.parse_args(['cc', '-m', '/opt/data', 'mybox'])
-        with mock.patch.object(cc, 'container_exists', return_value=False):
-            with terminal.capture() as (out, err):
-                ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=False):
+                with terminal.capture() as (out, err):
+                    ret = cc.run(args)
         self.assertEqual(1, ret)
-        self.assertIn('not found', err.getvalue())
+        self.assertIn('Container not found: mybox', err.getvalue())
 
     def test_unmount(self):
         """Test -u removes a mount device"""
@@ -5013,10 +5025,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         """Test -u fails if the device does not exist"""
         args = cmdline.parse_args(['cc', '-u', 'nosuch', 'mybox'])
         result = command.CommandResult(return_code=1, stdout='', stderr='')
-        with mock.patch.object(cc, 'container_exists', return_value=True):
-            with mock.patch.object(cc, 'has_mount', return_value=False):
-                with terminal.capture() as (out, err):
-                    ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'has_mount', return_value=False):
+                    with terminal.capture() as (out, err):
+                        ret = cc.run(args)
         self.assertEqual(1, ret)
         self.assertIn('nosuch', err.getvalue())
 
@@ -5395,9 +5408,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         orig_exists = cc.container_exists
         orig_status = cc.container_status
         orig_has_mount = cc.has_mount
+        orig_which = cc.shutil.which
         cc.container_exists = lambda name: True
         cc.container_status = lambda name: 'RUNNING'
         cc.has_mount = lambda name, mname: True
+        cc.shutil.which = lambda name: '/bin/lxc'
         cc.exec_cmd = fake_exec
         try:
             with terminal.capture() as (out, _):
@@ -5413,6 +5428,7 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
             cc.container_exists = orig_exists
             cc.container_status = orig_status
             cc.has_mount = orig_has_mount
+            cc.shutil.which = orig_which
             cc.exec_cmd = orig_exec
             os.path.expanduser = orig_expanduser
 
@@ -5814,8 +5830,81 @@ More text
         self.assertEqual(1, res)
         self.assertIn('Cannot find U-Boot', err.getvalue())
 
+    def test_setup_cc_already_installed(self):
+        """Test setup_cc when LXD is already installed"""
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which',
+                        return_value='/snap/bin/lxc'):
+            with terminal.capture() as (out, err):
+                res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        self.assertEqual('LXD already installed\n'
+                         'Use --force to re-run initialisation\n',
+                         out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_dry_run(self):
+        """Test setup_cc in dry-run mode shows the install steps"""
+        args = cmdline.parse_args(['-n', 'setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with terminal.capture() as (out, err):
+                    res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        output = out.getvalue()
+        self.assertIn('Would run: sudo snap install lxd', output)
+        self.assertIn('Would run: lxd init --minimal', output)
+        self.assertIn('Would run: sudo usermod -aG lxd simon', output)
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_installs(self):
+        """Test setup_cc runs the install steps when LXD is missing"""
+        calls = []
+
+        def mock_run_pipe(pipe_list, **kwargs):  # pylint: disable=unused-argument
+            calls.append(pipe_list[0])
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with mock.patch('uman_pkg.setup.command.run_pipe',
+                                side_effect=mock_run_pipe):
+                    with terminal.capture() as (out, err):
+                        res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        self.assertEqual(
+            [['sudo', 'snap', 'install', 'lxd'],
+             ['lxd', 'init', '--minimal'],
+             ['sudo', 'usermod', '-aG', 'lxd', 'simon']],
+            calls)
+        self.assertIn('LXD installed', out.getvalue())
+        self.assertIn("Log out and back in", out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_install_fails(self):
+        """Test setup_cc reports failure when a step fails"""
+        def mock_run_pipe(pipe_list, **kwargs):  # pylint: disable=unused-argument
+            return command.CommandResult(return_code=1, stdout='', stderr='')
+
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with mock.patch('uman_pkg.setup.command.run_pipe',
+                                side_effect=mock_run_pipe):
+                    with terminal.capture() as (out, err):
+                        res = setup.setup_cc(args)
+        self.assertEqual(1, res)
+        self.assertIn('Installing LXD failed', err.getvalue())
+        self.assertIn('Try running manually: sudo snap install lxd',
+                      out.getvalue())
+
     def test_setup_components_dict(self):
         """Test that SETUP_COMPONENTS has expected entries"""
+        self.assertIn('cc', setup.SETUP_COMPONENTS)
         self.assertIn('gcc', setup.SETUP_COMPONENTS)
         self.assertIn('qemu', setup.SETUP_COMPONENTS)
         self.assertIn('opensbi', setup.SETUP_COMPONENTS)
