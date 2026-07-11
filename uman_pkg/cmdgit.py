@@ -439,6 +439,7 @@ def do_rn(args):
     If there are unresolved conflicts, reports an error.
     If there are staged changes (just resolved a conflict), just continues.
     If stopped at an edit point, sets the next commit to edit and continues.
+    If no commits remain to edit, finishes the rebase.
 
     Args:
         args (argparse.Namespace): Arguments from cmdline
@@ -543,8 +544,11 @@ def do_rn(args):
                 if len(non_comment_indices) >= skip_count:
                     break
         if not non_comment_indices:
-            tout.error('No commits left in rebase todo')
-            return 1
+            # Nothing left to edit, so finish the rebase
+            result = git('rebase', '--continue')
+            show_rebase_status(result.stdout + result.stderr,
+                               result.return_code)
+            return result
         target_idx = non_comment_indices[-1]
 
     lines[target_idx] = re.sub(r'^\S+', 'edit', lines[target_idx])

@@ -2497,6 +2497,41 @@ class TestGitRebase(TestBase, GitRepoMixin):
         self.assertFalse(self.is_rebasing())
         self.assertEqual('Commit 4', self.get_head_subject())
 
+    def test_real_rn_finishes_at_end(self):
+        """Test rn finishes the rebase when no commits remain to edit"""
+        # Start rebase with rf 2 (last 2 commits), stops at Commit 3
+        args = cmdline.parse_args(['git', 'rf', '2'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rf(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Rebasing \d+/\d+: stopped at [0-9a-f]+\.\.\. Commit 3\n')
+        self.assertFalse(err.getvalue())
+        self.assertTrue(self.is_rebasing())
+        self.assertEqual('Commit 3', self.get_head_subject())
+
+        # rn to continue to the last commit (also set to edit)
+        args = cmdline.parse_args(['git', 'rn'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rn(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Rebasing \d+/\d+: stopped at [0-9a-f]+\.\.\. Commit 4\n')
+        self.assertFalse(err.getvalue())
+        self.assertTrue(self.is_rebasing())
+        self.assertEqual('Commit 4', self.get_head_subject())
+
+        # rn again with nothing left - should finish the rebase
+        args = cmdline.parse_args(['git', 'rn'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rn(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Successfully rebased and updated refs/heads/\w+\n')
+        self.assertFalse(err.getvalue())
+        self.assertFalse(self.is_rebasing())
+        self.assertEqual('Commit 4', self.get_head_subject())
+
     def test_real_rn_with_skip(self):
         """Test rn 2 to skip ahead and edit the 2nd remaining commit"""
         # Start rebase with rp 1 (stop at first commit)
