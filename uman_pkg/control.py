@@ -212,7 +212,8 @@ def get_ci_remote(args):
     return 'ci'
 
 
-def git_push_branch(branch, args, ci_vars=None, upstream=False, dest=None):
+def git_push_branch(branch, args, ci_vars=None, upstream=False, dest=None,
+                    skip_ci=False):
     """Push a branch to the CI remote with optional CI variables
 
     Args:
@@ -223,6 +224,8 @@ def git_push_branch(branch, args, ci_vars=None, upstream=False, dest=None):
         upstream (bool): Whether to set upstream with -u flag
         dest (str): Destination branch name (defaults to args.dest or
             current branch name)
+        skip_ci (bool): True to skip CI, so that no pipeline is created. This
+            takes precedence over ci_vars
 
     Returns:
         CommandResult or None: Result of push command
@@ -236,7 +239,9 @@ def git_push_branch(branch, args, ci_vars=None, upstream=False, dest=None):
     if upstream:
         push_cmd.append('-u')
 
-    if ci_vars:
+    if skip_ci:
+        push_cmd.extend(['-o', 'ci.skip'])
+    elif ci_vars:
         for key, value in ci_vars.items():
             push_cmd.extend(['-o', f'ci.variable={key}={value}'])
 
@@ -604,10 +609,13 @@ def do_merge_request(args):  # pylint: disable=too-many-locals
         tout.notice(f'dry-run: Create MR \'{title}\'')
         return 0
 
-    # Push branch with CI variables - respects --null flag
+    # Push branch with CI variables - respects --null and --skip flags
     tout.info('Pushing branch...')
-    ci_vars = build_ci_vars(args)
-    git_push_branch(branch, args, ci_vars=ci_vars)
+    if args.skip:
+        tout.info('Skipping CI: no pipeline will be created')
+        git_push_branch(branch, args, skip_ci=True)
+    else:
+        git_push_branch(branch, args, ci_vars=build_ci_vars(args))
 
     if existing_mr:
         # Update existing MR
@@ -649,9 +657,11 @@ def do_ci(args):
 
     tout.info(f'Current branch: {branch}')
 
-    ci_vars = build_ci_vars(args)
-
-    result = git_push_branch(branch, args, ci_vars=ci_vars)
+    if args.skip:
+        tout.info('Skipping CI: no pipeline will be created')
+        result = git_push_branch(branch, args, skip_ci=True)
+    else:
+        result = git_push_branch(branch, args, ci_vars=build_ci_vars(args))
     if result and result.return_code:
         return result.return_code
 

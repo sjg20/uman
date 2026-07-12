@@ -126,13 +126,16 @@ Some simple examples::
     # Push and run only on the SJG lab with the 'rpi4' board
     uman ci -l rpi4
 
+    # Push without creating a pipeline at all
+    uman ci -x
+
     # Dry-run to see what would be executed
     uman --dry-run ci -w
 
 **Options**
 
-- ``-0, --null``: Skip all CI stages (no builds/tests run, MR can merge
-  immediately)
+- ``-0, --null``: Set all CI vars to 0, so a pipeline is created but no
+  builds/tests run (MR can merge immediately)
 - ``-a, --all``: Run all CI stages including lab
 - ``-d, --dest BRANCH``: Destination branch name (default: current branch name)
 - ``-f, --force``: Force push (required when rewriting branch history)
@@ -146,6 +149,9 @@ Some simple examples::
 - ``-t, --test-spec SPEC``: Override test specification (e.g. "not sleep",
   "test_ofplatdata")
 - ``-w, --world``: Enable WORLD
+- ``-x, --skip``: Skip CI entirely, so no pipeline is created at all (pushes
+  with ``-o ci.skip``). Unlike ``-0``, which still creates a pipeline with
+  every stage disabled. Takes precedence over the other CI flags
 
 Pytest Targeting Examples
 ~~~~~~~~~~~~~~~~~~~~~~~~~

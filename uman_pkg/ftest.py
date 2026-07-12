@@ -156,6 +156,7 @@ def make_args(**kwargs):
         'show_output': False,
         'sage': None,
         'sjg': None,
+        'skip': False,
         'suites': False,
         'test_spec': [],
         'timing': None,
@@ -3188,6 +3189,37 @@ class TestUmanCI(TestBase):
             '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= '
             '-o ci.variable=SAGE_LAB= ci master\n',
             out.getvalue())
+
+    def test_ci_skip(self):
+        """Test CI command with --skip pushes with ci.skip and no vars"""
+        self._create_git_repo()
+
+        args = make_args(dry_run=True, skip=True)
+        with terminal.capture() as (out, _):
+            res = control.do_ci(args)
+        self.assertEqual(0, res)
+        self.assertEqual('git push -o ci.skip ci master\n', out.getvalue())
+
+    def test_ci_skip_overrides_vars(self):
+        """Test --skip takes precedence over other CI flags"""
+        self._create_git_repo()
+
+        args = make_args(dry_run=True, skip=True, suites=True, world=True)
+        with terminal.capture() as (out, _):
+            res = control.do_ci(args)
+        self.assertEqual(0, res)
+        self.assertEqual('git push -o ci.skip ci master\n', out.getvalue())
+
+    def test_ci_skip_option(self):
+        """Test -x/--skip option parsing"""
+        args = cmdline.parse_args(['ci', '-x'])
+        self.assertTrue(args.skip)
+
+        args = cmdline.parse_args(['ci', '--skip'])
+        self.assertTrue(args.skip)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertFalse(args.skip)
 
     def test_ci_custom_remote(self):
         """Test CI command with -r uses the specified remote"""

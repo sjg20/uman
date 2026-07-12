@@ -166,6 +166,8 @@ def add_ci_subparser(subparsers):
     ci.add_argument('-t', '--test-spec', metavar='SPEC',
                     help="Override test spec (e.g. 'not sleep')")
     ci.add_argument('-w', '--world', action='store_true', help='Enable WORLD')
+    ci.add_argument('-x', '--skip', action='store_true',
+                    help='Skip CI entirely, so no pipeline is created')
     return ci
 
 
