@@ -141,6 +141,8 @@ def add_ci_subparser(subparsers):
     pytest_help = 'Enable PYTEST: to select a particular one: -p help'
     sjg_help = 'Enable SJG_LAB: to select a particular board: -l help'
     sage_help = 'Enable SAGE_LAB: to select a particular board: -S help'
+    sjg_slow_help = ('Enable SJG_LAB_SLOW (slow lab jobs, skipped by '
+                     'default): to select a particular one: -L help')
 
     ci.add_argument('-0', '--null', action='store_true',
                     help='Set all CI vars to 0')
@@ -150,6 +152,8 @@ def add_ci_subparser(subparsers):
                     help='Destination branch name (default: current branch)')
     ci.add_argument('-f', '--force', action='store_true',
                     help='Force push to remote branch')
+    ci.add_argument('-L', '--sjg-slow', nargs='?', const='1', default=None,
+                    dest='sjg_slow', help=sjg_slow_help)
     ci.add_argument('-l', '--sjg', nargs='?', const='1', default=None,
                     help=sjg_help)
     ci.add_argument('-m', '--merge', action='store_true',

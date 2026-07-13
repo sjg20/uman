@@ -48,11 +48,13 @@ def build_ci_vars(args):
         'WORLD': '0',
         'SJG_LAB': '',
         'SAGE_LAB': '',
+        'SJG_LAB_SLOW': '',
     }
 
     if not args.null:
         ci_flags_set = (args.suites or args.pytest or args.world or
-                       args.sjg or args.sage or args.test_spec)
+                       args.sjg or args.sage or args.sjg_slow or
+                       args.test_spec)
 
         if args.all:
             ci_vars['SUITES'] = '1'
@@ -60,6 +62,7 @@ def build_ci_vars(args):
             ci_vars['WORLD'] = '1'
             ci_vars['SJG_LAB'] = '1'
             ci_vars['SAGE_LAB'] = '1'
+            ci_vars['SJG_LAB_SLOW'] = '1'
         elif not ci_flags_set:
             ci_vars['SUITES'] = '1'
             ci_vars['PYTEST'] = '1'
@@ -77,6 +80,8 @@ def build_ci_vars(args):
                 ci_vars['SJG_LAB'] = args.sjg
             if args.sage is not None:
                 ci_vars['SAGE_LAB'] = args.sage
+            if args.sjg_slow is not None:
+                ci_vars['SJG_LAB_SLOW'] = args.sjg_slow
             if args.test_spec:
                 ci_vars['TEST_SPEC'] = args.test_spec
 
@@ -106,6 +111,10 @@ def build_commit_tags(args, ci_vars):  # pylint: disable=unused-argument
         tags.append('[skip-sjg]')
     if ci_vars.get('SAGE_LAB') in ('0', ''):
         tags.append('[skip-sage]')
+    # The slow lab jobs auto-run on merge_request_event, so the only way to
+    # keep them out of an MR pipeline is this tag
+    if ci_vars.get('SJG_LAB_SLOW') in ('0', ''):
+        tags.append('[skip-sjg-slow]')
 
     return ' '.join(tags)
 
@@ -337,6 +346,42 @@ def validate_sjg_value(value, parser):
     return value in parser.roles
 
 
+def validate_sjg_slow_value(value, parser):
+    """Validate an SJG_LAB_SLOW value against available choices
+
+    Args:
+        value (str): Value to validate
+        parser (GitLabCIParser): GitLabCIParser instance
+
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    if value in ('1', '', 'help'):
+        return True
+    return value in parser.slow_roles
+
+
+def show_sjg_slow_choices(parser):
+    """Show all available SJG_LAB_SLOW choices
+
+    Args:
+        parser (GitLabCIParser): GitLabCIParser instance
+
+    Returns:
+        int: Exit code (always 0)
+    """
+    tout.notice('Available SJG_LAB_SLOW targets:')
+    tout.notice('')
+    tout.notice('Special values:')
+    tout.notice('  1                    - Run all slow lab jobs')
+    tout.notice('  (empty)              - Skip the slow lab jobs')
+    tout.notice('')
+    tout.notice('Slow lab names:')
+    for role in parser.slow_roles:
+        tout.notice(f'  {role}')
+    return 0
+
+
 def show_sage_choices(parser):
     """Show all available SAGE_LAB choices
 
@@ -394,6 +439,8 @@ def validate_ci_args(args):
         return show_pytest_choices(parser)
     if args.sjg == 'help':
         return show_sjg_choices(parser)
+    if args.sjg_slow == 'help':
+        return show_sjg_slow_choices(parser)
     if args.sage == 'help':
         return show_sage_choices(parser)
 
@@ -409,6 +456,13 @@ def validate_ci_args(args):
         if not validate_sjg_value(args.sjg, parser):
             tout.error(f'Invalid SJG_LAB value: {args.sjg}')
             tout.notice(f'To see available choices: {sys.argv[0]} ci -l help')
+            return 1
+
+    # Validate sjg-slow argument
+    if args.sjg_slow is not None:
+        if not validate_sjg_slow_value(args.sjg_slow, parser):
+            tout.error(f'Invalid SJG_LAB_SLOW value: {args.sjg_slow}')
+            tout.notice(f'To see available choices: {sys.argv[0]} ci -L help')
             return 1
 
     # Validate sage argument

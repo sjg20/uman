@@ -129,6 +129,9 @@ Some simple examples::
     # Push without creating a pipeline at all
     uman ci -x
 
+    # Include the slow lab jobs, which are otherwise skipped
+    uman ci -m -s -p -L
+
     # Dry-run to see what would be executed
     uman --dry-run ci -w
 
@@ -139,6 +142,9 @@ Some simple examples::
 - ``-a, --all``: Run all CI stages including lab
 - ``-d, --dest BRANCH``: Destination branch name (default: current branch name)
 - ``-f, --force``: Force push (required when rewriting branch history)
+- ``-L, --sjg-slow [BOARD]``: Set SJG_LAB_SLOW to run the slow lab jobs
+  (optionally specify one; ``-L help`` lists them). These are skipped by
+  default, including on merge requests
 - ``-l, --sjg [BOARD]``: Set SJG_LAB (optionally specify board)
 - ``-m, --merge``: Create merge request using cover letter from patch series
 - ``-p, --pytest [BOARD]``: Enable PYTEST (optionally specify board name)

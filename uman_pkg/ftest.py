@@ -156,6 +156,7 @@ def make_args(**kwargs):
         'show_output': False,
         'sage': None,
         'sjg': None,
+        'sjg_slow': None,
         'skip': False,
         'suites': False,
         'test_spec': [],
@@ -2872,6 +2873,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2885,6 +2887,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2898,6 +2901,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '1',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '1',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2911,6 +2915,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '1',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2924,6 +2929,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': 'rpi4',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2937,6 +2943,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2950,6 +2957,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': 'Raspberry Pi 4',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2963,6 +2971,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
             'TEST_SPEC': 'not sleep',
         }
         self.assertEqual(expected, ci_vars)
@@ -2977,6 +2986,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2990,6 +3000,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': 'bbb',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -3004,6 +3015,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
         self.assertNotIn('TEST_SPEC', ci_vars)
@@ -3017,6 +3029,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
             'TEST_SPEC': 'test_ofplatdata',
         }
         self.assertEqual(expected, ci_vars)
@@ -3031,6 +3044,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -3048,13 +3062,14 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '1',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
     def test_build_commit_tags_no_skip(self):
         """Test build_commit_tags with no skip flags (all enabled)"""
         args = make_args(suites=True, pytest='1', world=True, sjg='1',
-                         sage='1')
+                         sage='1', sjg_slow='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('', tags)
@@ -3066,7 +3081,7 @@ class TestUmanCIVars(TestBase):
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
             '[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
-            '[skip-sage]', tags)
+            '[skip-sage] [skip-sjg-slow]', tags)
 
     def test_build_commit_tags_skip_specific(self):
         """Test build_commit_tags with specific stages enabled"""
@@ -3074,13 +3089,23 @@ class TestUmanCIVars(TestBase):
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
-            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage]', tags)
+            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage] '
+            '[skip-sjg-slow]', tags)
 
     def test_build_commit_tags_skip_world_only(self):
         """Test build_commit_tags with world skipped"""
         # suites and pytest enabled, world skipped
         args = make_args(suites=True, pytest='1')
         ci_vars = control.build_ci_vars(args)
+        tags = control.build_commit_tags(args, ci_vars)
+        self.assertEqual(
+            '[skip-world] [skip-sjg] [skip-sage] [skip-sjg-slow]', tags)
+
+    def test_build_commit_tags_sjg_slow(self):
+        """Test build_commit_tags omits [skip-sjg-slow] when slow is enabled"""
+        args = make_args(suites=True, pytest='1', sjg_slow='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('1', ci_vars['SJG_LAB_SLOW'])
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('[skip-world] [skip-sjg] [skip-sage]', tags)
 
@@ -3159,7 +3184,7 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
             '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
 
     def test_ci_specific_variables(self):
@@ -3173,7 +3198,7 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
             '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
 
     def test_ci_no_ci_flag(self):
@@ -3187,7 +3212,7 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=0 -o ci.variable=PYTEST=0 '
             '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
 
     def test_ci_skip(self):
@@ -3209,6 +3234,36 @@ class TestUmanCI(TestBase):
             res = control.do_ci(args)
         self.assertEqual(0, res)
         self.assertEqual('git push -o ci.skip ci master\n', out.getvalue())
+
+    def test_ci_sjg_slow_option(self):
+        """Test -L/--sjg-slow option parsing"""
+        args = cmdline.parse_args(['ci', '-L'])
+        self.assertEqual('1', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci', '-L', 'efi-x86_64-uboot-iso-install'])
+        self.assertEqual('efi-x86_64-uboot-iso-install', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci', '--sjg-slow'])
+        self.assertEqual('1', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertIsNone(args.sjg_slow)
+
+    def test_ci_slow_skipped_by_default(self):
+        """Test the slow lab jobs are skipped unless asked for"""
+        # 'uman ci -m -s -p' must not run the slow lab jobs
+        args = make_args(merge=True, suites=True, pytest='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('', ci_vars['SJG_LAB_SLOW'])
+        self.assertIn('[skip-sjg-slow]',
+                      control.build_commit_tags(args, ci_vars))
+
+        # Adding -L asks for them, so no skip tag
+        args = make_args(merge=True, suites=True, pytest='1', sjg_slow='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('1', ci_vars['SJG_LAB_SLOW'])
+        self.assertNotIn('[skip-sjg-slow]',
+                         control.build_commit_tags(args, ci_vars))
 
     def test_ci_skip_option(self):
         """Test -x/--skip option parsing"""
