@@ -455,6 +455,9 @@ def add_test_subparser(subparsers):
         '--flattree-too', action='store_true',
         help='Run both live-tree and flat-tree tests (default: live-tree only)')
     test.add_argument(
+        '-k', '--soft-fail', action='store_true', dest='soft_fail',
+        help='Continue each test after a failure, to report all of them')
+    test.add_argument(
         '-l', '--list', action='store_true', dest='list_tests',
         help='List available tests')
     test.add_argument(

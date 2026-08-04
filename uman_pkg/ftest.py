@@ -5999,6 +5999,21 @@ int main(void) { return 0; }
         self.assertEqual(['/sb', '-T', '-F', '-c', 'ut -E -m dm'], cmd)
 
     @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
+    @mock.patch.object(cmdtest, 'has_no_flat', return_value=True)
+    def test_build_ut_cmd_soft_fail(self, *_):
+        """Test build_ut_cmd with soft_fail adds --soft_fail"""
+        cmd = cmdtest.build_ut_cmd('/sb', [('dm', None)], soft_fail=True)
+        self.assertEqual(
+            ['/sb', '-T', '-F', '--soft_fail', '-c', 'ut -E dm'], cmd)
+
+    @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
+    @mock.patch.object(cmdtest, 'has_no_flat', return_value=True)
+    def test_build_ut_cmd_no_soft_fail(self, *_):
+        """Test build_ut_cmd omits --soft_fail by default"""
+        cmd = cmdtest.build_ut_cmd('/sb', [('dm', None)])
+        self.assertNotIn('--soft_fail', cmd)
+
+    @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
     @mock.patch.object(cmdtest, 'has_no_flat', return_value=False)
     def test_build_ut_cmd_no_flat_unsupported(self, *_):
         """Test build_ut_cmd omits -F when source tree lacks support"""
@@ -6281,6 +6296,51 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
         self.assertIn('No results detected', err.getvalue())
         # Error message should be shown in output
         self.assertIn('Missing required argument', out.getvalue())
+
+    def test_run_tests_soft_fail(self):
+        """Test run_tests passes --soft_fail to the sandbox"""
+        cap = []
+
+        def mock_run(*args, **_kwargs):
+            cap.append(args)
+            return command.CommandResult(return_code=0,
+                                         stdout='Result: PASS dm_test_one\n')
+
+        args = cmdline.parse_args(['test', 'dm', '-k'])
+        self.assertTrue(args.soft_fail)
+        col = terminal.Color()
+        with mock.patch.object(cmdtest, 'has_soft_fail', return_value=True):
+            with mock.patch.object(command, 'run_one', mock_run):
+                with mock.patch.object(cmdtest, 'ensure_dm_init_files',
+                                       return_value=True):
+                    with terminal.capture() as (_, err):
+                        result = cmdtest.run_tests('/path/to/sandbox',
+                                                   [('dm', None)], args, col)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertIn('--soft_fail', cap[0])
+
+    def test_run_tests_soft_fail_unsupported(self):
+        """Test run_tests warns and drops --soft_fail on an older tree"""
+        cap = []
+
+        def mock_run(*args, **_kwargs):
+            cap.append(args)
+            return command.CommandResult(return_code=0,
+                                         stdout='Result: PASS dm_test_one\n')
+
+        args = cmdline.parse_args(['test', 'dm', '-k'])
+        col = terminal.Color()
+        with mock.patch.object(cmdtest, 'has_soft_fail', return_value=False):
+            with mock.patch.object(command, 'run_one', mock_run):
+                with mock.patch.object(cmdtest, 'ensure_dm_init_files',
+                                       return_value=True):
+                    with terminal.capture() as (_, err):
+                        result = cmdtest.run_tests('/path/to/sandbox',
+                                                   [('dm', None)], args, col)
+        self.assertEqual(0, result)
+        self.assertIn('does not support --soft_fail', err.getvalue())
+        self.assertNotIn('--soft_fail', cap[0])
 
     def test_run_tests_parses_summary(self):
         """Test run_tests uses summary line when -E is unavailable"""

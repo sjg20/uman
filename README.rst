@@ -920,6 +920,9 @@ without going through pytest. This is faster for quick iteration on C code.
     # List tests in a suite
     uman test -l dm
 
+    # Report every failure in a test, not just the first
+    uman test dm.acpi -k
+
 **Options**:
 
 - ``-b, --build``: Build before running tests
@@ -932,6 +935,8 @@ without going through pytest. This is faster for quick iteration on C code.
 - ``-g, --gdb``: Run sandbox under gdb-multiarch
 - ``--gdb-cmd CMD``: GDB command to run after the test (repeatable; implies -g)
 - ``-j, --jobs JOBS``: Number of parallel jobs (use with -b)
+- ``-k, --soft-fail``: Continue each test after a failure, so that all the
+  failures are reported, not just the first (sandbox ``--soft_fail``)
 - ``-l, --list``: List available tests
 - ``-L, --lto``: Enable LTO when building (use with -b)
 - ``--leak-check``: Check for memory leaks around each test using mallinfo()
