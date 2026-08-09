@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from u_boot_pylib import command
@@ -122,6 +123,8 @@ def make_args(**kwargs):
         'build': False,
         'build_dir': None,
         'c_test': False,
+        'cancel': None,
+        'cancel_old': False,
         'cmd': 'ci',
         'debug': False,
         'dest': None,
@@ -4394,6 +4397,231 @@ class TestUmanMergeRequest(TestBase):
         self.assertEqual('New Title', mock_mr.title)
         self.assertEqual('New Description', mock_mr.description)
         mock_mr.save.assert_called_once()
+
+
+def make_pipe(pipe_id, status='running'):
+    """Create a stand-in for a GitLab pipeline object
+
+    Args:
+        pipe_id (int): Pipeline ID
+        status (str): Pipeline status
+
+    Returns:
+        SimpleNamespace: Object with id and status attributes
+    """
+    return SimpleNamespace(id=pipe_id, status=status)
+
+
+class TestUmanCancel(TestBase):
+    """Tests for cancelling CI pipelines"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.NOTICE)
+
+    def test_cancel_option_parsing(self):
+        """Test -C/--cancel and -c/--cancel-old parsing"""
+        args = cmdline.parse_args(['ci', '-C'])
+        self.assertEqual('all', args.cancel)
+        self.assertFalse(args.cancel_old)
+
+        args = cmdline.parse_args(['ci', '-C', '1234'])
+        self.assertEqual('1234', args.cancel)
+
+        args = cmdline.parse_args(['ci', '--cancel', '1234'])
+        self.assertEqual('1234', args.cancel)
+
+        args = cmdline.parse_args(['ci', '-c'])
+        self.assertTrue(args.cancel_old)
+        self.assertIsNone(args.cancel)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertIsNone(args.cancel)
+        self.assertFalse(args.cancel_old)
+
+    def test_get_active_pipelines(self):
+        """Test only unfinished pipelines are returned, newest first"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [
+            make_pipe(1, 'success'), make_pipe(2, 'running'),
+            make_pipe(3, 'failed'), make_pipe(4, 'pending'),
+            make_pipe(5, 'canceled'),
+        ]
+        pipes = control.get_active_pipelines(project, 'my-branch')
+        self.assertEqual([4, 2], [pipe.id for pipe in pipes])
+
+    def test_get_active_pipelines_with_mr(self):
+        """Test merge-request pipelines are included, without duplicates"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(2, 'running')]
+        mr = mock.MagicMock()
+        mr.pipelines.list.return_value = [make_pipe(2, 'running'),
+                                          make_pipe(7, 'running')]
+        pipes = control.get_active_pipelines(project, 'my-branch', mr)
+        self.assertEqual([7, 2], [pipe.id for pipe in pipes])
+
+    def test_cancel_pipelines(self):
+        """Test cancel_pipelines cancels each pipeline"""
+        project = mock.MagicMock()
+        with terminal.capture() as (out, err):
+            count = control.cancel_pipelines(
+                project, [make_pipe(4), make_pipe(2)])
+        self.assertEqual(2, count)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 4\nCancelled pipeline 2\n',
+                         out.getvalue())
+        self.assertEqual([mock.call(4), mock.call(2)],
+                         project.pipelines.get.call_args_list)
+
+    def test_cancel_pipelines_dry_run(self):
+        """Test dry-run shows the pipelines without cancelling them"""
+        project = mock.MagicMock()
+        with terminal.capture() as (out, err):
+            count = control.cancel_pipelines(project, [make_pipe(4)],
+                                             dry_run=True)
+        self.assertEqual(1, count)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('dry-run: Cancel pipeline 4 (running)\n',
+                         out.getvalue())
+        project.pipelines.get.assert_not_called()
+
+    def test_do_cancel_all(self):
+        """Test --cancel with no ID cancels every active pipeline"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4), make_pipe(2)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 4\nCancelled pipeline 2\n',
+                         out.getvalue())
+
+    def test_do_cancel_one(self):
+        """Test --cancel with an ID cancels just that pipeline"""
+        project = mock.MagicMock()
+        args = make_args(cancel='1234')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 1234\n', out.getvalue())
+        # The branch should not be searched when an ID is given
+        project.pipelines.list.assert_not_called()
+
+    def test_do_cancel_bad_id(self):
+        """Test --cancel with a non-numeric ID reports an error"""
+        args = make_args(cancel='wibble')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=mock.MagicMock()):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(1, result)
+        self.assertFalse(out.getvalue())
+        self.assertEqual('Invalid pipeline ID: wibble\n', err.getvalue())
+
+    def test_do_cancel_nothing_active(self):
+        """Test --cancel says so when there is nothing to cancel"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(1, 'success')]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('No active pipelines for my-branch\n',
+                         out.getvalue())
+
+    def test_do_cancel_no_connection(self):
+        """Test --cancel fails when GitLab cannot be reached"""
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab', return_value=None):
+            with terminal.capture():
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(1, result)
+
+    def test_collect_old_pipelines_disabled(self):
+        """Test no GitLab access happens without --cancel-old"""
+        args = make_args()
+        with mock.patch.object(control, 'connect_gitlab') as connect:
+            project, pipes = control.collect_old_pipelines(args, 'my-branch')
+        self.assertIsNone(project)
+        self.assertFalse(pipes)
+        connect.assert_not_called()
+
+    def test_collect_old_pipelines(self):
+        """Test --cancel-old collects the pipelines running before a push"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4), make_pipe(2)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                got_project, pipes = control.collect_old_pipelines(
+                    args, 'my-branch')
+        self.assertEqual(project, got_project)
+        self.assertEqual([4, 2], [pipe.id for pipe in pipes])
+        self.assertFalse(err.getvalue())
+        # Nothing is cancelled yet, and the plan is only shown with -v
+        self.assertFalse(out.getvalue())
+
+    def test_collect_old_pipelines_reuses_project(self):
+        """Test a project passed in is used, without connecting again"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        args = make_args(cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab') as connect:
+            with terminal.capture():
+                got_project, pipes = control.collect_old_pipelines(
+                    args, 'my-branch', project)
+        self.assertEqual(project, got_project)
+        self.assertEqual([4], [pipe.id for pipe in pipes])
+        connect.assert_not_called()
+
+    def test_ci_cancel_old_after_push(self):
+        """Test 'um ci -c' cancels the old pipelines after pushing"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        project.mergerequests.list.return_value = []
+        args = make_args(dry_run=True, cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with mock.patch.object(control, 'command') as cmd:
+                cmd.output_one_line.return_value = 'my-branch'
+                with terminal.capture() as (out, err):
+                    result = control.do_ci(args)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        stdout = out.getvalue()
+        # The push must come before the cancel, so the new pipeline exists
+        self.assertLess(stdout.index('git push'),
+                        stdout.index('Cancel pipeline 4'))
+
+    def test_ci_cancel_skips_push(self):
+        """Test 'um ci -C' cancels without pushing anything"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with mock.patch.object(control, 'command') as cmd:
+                cmd.output_one_line.return_value = 'my-branch'
+                with terminal.capture() as (out, err):
+                    result = control.do_ci(args)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertNotIn('git push', out.getvalue())
+        self.assertIn('Cancelled pipeline 4', out.getvalue())
 
 
 class TestSettings(TestBase):

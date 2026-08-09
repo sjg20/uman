@@ -132,6 +132,15 @@ Some simple examples::
     # Include the slow lab jobs, which are otherwise skipped
     uman ci -m -s -p -L
 
+    # Update a merge request, cancelling the pipelines it supersedes
+    uman ci -fmc
+
+    # Cancel everything running on the current branch
+    uman ci -C
+
+    # Cancel one pipeline
+    uman ci -C 12345
+
     # Dry-run to see what would be executed
     uman --dry-run ci -w
 
@@ -140,6 +149,12 @@ Some simple examples::
 - ``-0, --null``: Set all CI vars to 0, so a pipeline is created but no
   builds/tests run (MR can merge immediately)
 - ``-a, --all``: Run all CI stages including lab
+- ``-c, --cancel-old``: Cancel the pipelines which were running before this
+  push, leaving only the new one. Use with ``-m`` to drop the superseded
+  pipelines on a merge request
+- ``-C, --cancel [ID]``: Cancel pipeline ID, or every active pipeline for the
+  current branch (and its merge request) if no ID is given, then exit without
+  pushing
 - ``-d, --dest BRANCH``: Destination branch name (default: current branch name)
 - ``-f, --force``: Force push (required when rewriting branch history)
 - ``-L, --sjg-slow [BOARD]``: Set SJG_LAB_SLOW to run the slow lab jobs

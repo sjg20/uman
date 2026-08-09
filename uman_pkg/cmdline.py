@@ -11,6 +11,9 @@ import argparse
 import os
 import sys
 
+# Value of --cancel when no pipeline ID is given, meaning 'all of them'
+CANCEL_ALL = 'all'
+
 
 def get_git_actions():
     """Get git actions from cmdgit module
@@ -148,6 +151,14 @@ def add_ci_subparser(subparsers):
                     help='Set all CI vars to 0')
     ci.add_argument('-a', '--all', action='store_true',
                     help='Run all CI stages including lab')
+    ci.add_argument('-c', '--cancel-old', action='store_true',
+                    dest='cancel_old',
+                    help='Cancel the pipelines running before this push, so '
+                    'only the new one is left')
+    ci.add_argument('-C', '--cancel', nargs='?', const=CANCEL_ALL,
+                    default=None, metavar='ID',
+                    help='Cancel pipeline ID, or all active pipelines for the '
+                    'branch, then exit without pushing')
     ci.add_argument('-d', '--dest', metavar='BRANCH', default=None,
                     help='Destination branch name (default: current branch)')
     ci.add_argument('-f', '--force', action='store_true',

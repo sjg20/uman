@@ -10,6 +10,7 @@ the features of uman.
 
 import os
 import sys
+from types import SimpleNamespace
 
 # pylint: disable=import-error
 from u_boot_pylib import command
@@ -17,7 +18,12 @@ from u_boot_pylib import terminal
 from u_boot_pylib import tout
 
 from uman_pkg import settings
+from uman_pkg.cmdline import CANCEL_ALL
 from uman_pkg.util import exec_cmd
+
+# Pipeline statuses which mean it has not finished, so can still be cancelled
+ACTIVE_STATUS = ('created', 'waiting_for_resource', 'preparing', 'pending',
+                 'running', 'scheduled')
 
 # Heavy imports are done lazily in the functions that need them:
 # - gitlab: do_merge_request()
@@ -609,6 +615,226 @@ def extract_mr_info(branch, args):
     return title, desc_with_tags, commit_tags
 
 
+def connect_gitlab(args):
+    """Connect to GitLab and get the project for the CI remote
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+
+    Returns:
+        Project: GitLab project object, or None if the connection failed
+    """
+    # pylint: disable=import-outside-toplevel
+    import gitlab
+
+    uboot_tools = os.path.expanduser(
+        os.environ.get('UBOOT_TOOLS', '~/u/tools'))
+    if uboot_tools not in sys.path:
+        sys.path.insert(0, uboot_tools)
+    from pickman import gitlab_api
+
+    remote_url = gitlab_api.get_remote_url(get_ci_remote(args))
+    host, proj = gitlab_api.parse_url(remote_url)
+    if not host or not proj:
+        tout.error(f'Cannot parse remote URL: {remote_url}')
+        return None
+
+    token = gitlab_api.get_token()
+    if not token:
+        tout.error('No GitLab token available')
+        return None
+
+    try:
+        glab = gitlab.Gitlab(f'https://{host}', private_token=token)
+        return glab.projects.get(proj)
+    except gitlab.GitlabError as exc:
+        tout.error(f'Could not connect to GitLab: {exc}')
+        return None
+
+
+def find_mr(project, branch):
+    """Find the open merge request for a branch
+
+    Args:
+        project (Project): GitLab project object
+        branch (str): Source branch name
+
+    Returns:
+        MergeRequest: The open merge request, or None if there is not one
+    """
+    # pylint: disable=import-outside-toplevel
+    import gitlab
+
+    try:
+        mrs = project.mergerequests.list(source_branch=branch, state='opened')
+        return mrs[0] if mrs else None
+    except gitlab.GitlabError as exc:
+        tout.warning(f'Could not look for a merge request: {exc}')
+        return None
+
+
+def get_active_pipelines(project, branch, mr=None):
+    """Get the pipelines for a branch which have not finished yet
+
+    Includes the pipelines on the branch's merge request, since those have
+    their own ref and so do not show up in a search by branch.
+
+    Args:
+        project (Project): GitLab project object
+        branch (str): Branch name
+        mr (MergeRequest): Merge request to include pipelines from, or None
+
+    Returns:
+        list of Pipeline: Active pipelines, newest first
+    """
+    # pylint: disable=import-outside-toplevel
+    import gitlab
+
+    pipelines = {}
+    try:
+        for pipe in project.pipelines.list(ref=branch, get_all=True):
+            pipelines[pipe.id] = pipe
+        if mr:
+            for pipe in mr.pipelines.list(get_all=True):
+                pipelines.setdefault(pipe.id, pipe)
+    except gitlab.GitlabError as exc:
+        tout.error(f'Could not list pipelines: {exc}')
+        return []
+
+    active = [pipe for pipe in pipelines.values()
+              if pipe.status in ACTIVE_STATUS]
+    return sorted(active, key=lambda pipe: pipe.id, reverse=True)
+
+
+def cancel_pipelines(project, pipelines, dry_run=False):
+    """Cancel a list of pipelines
+
+    Args:
+        project (Project): GitLab project object
+        pipelines (list of Pipeline): Pipelines to cancel
+        dry_run (bool): True to show what would be cancelled, without doing it
+
+    Returns:
+        int: Number of pipelines cancelled
+    """
+    # pylint: disable=import-outside-toplevel
+    import gitlab
+
+    count = 0
+    for pipe in pipelines:
+        if dry_run:
+            tout.notice(f'dry-run: Cancel pipeline {pipe.id} ({pipe.status})')
+            count += 1
+            continue
+        try:
+            project.pipelines.get(pipe.id).cancel()
+            tout.notice(f'Cancelled pipeline {pipe.id}')
+            count += 1
+        except gitlab.GitlabError as exc:
+            tout.error(f'Could not cancel pipeline {pipe.id}: {exc}')
+    return count
+
+
+def collect_old_pipelines(args, branch, project=None, mr=None):
+    """Note the pipelines which are active before a push, for --cancel-old
+
+    These are cancelled after the push, so that only the new pipeline is left
+    running. They are collected first, since GitLab takes a moment to create
+    the new pipeline and it would otherwise be hard to tell them apart.
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+        branch (str): Branch name
+        project (Project): GitLab project, if already connected, else None
+        mr (MergeRequest): Merge request for the branch, if already known.
+            Only used when project is given
+
+    Returns:
+        tuple:
+            Project: GitLab project object, or None if not needed/available
+            list of Pipeline: Active pipelines, empty if there are none
+    """
+    if not args.cancel_old:
+        return None, []
+
+    if project:
+        # The caller has looked up the merge request already
+        pipelines = get_active_pipelines(project, branch, mr)
+    else:
+        project = connect_gitlab(args)
+        if not project:
+            tout.warning('Cannot cancel old pipelines')
+            return None, []
+        pipelines = get_active_pipelines(project, branch,
+                                         find_mr(project, branch))
+    if pipelines:
+        ids = ' '.join(str(pipe.id) for pipe in pipelines)
+        tout.info(f'Will cancel {len(pipelines)} old pipeline(s): {ids}')
+    return project, pipelines
+
+
+def push_with_cancel(args, branch, project=None, mr=None):
+    """Push a branch, cancelling the pipelines it supersedes
+
+    With --cancel-old, the pipelines running beforehand are cancelled once
+    the push has created a new one.
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+        branch (str): Branch name to push
+        project (Project): GitLab project, if already connected, else None
+        mr (MergeRequest): Merge request for the branch, if already known
+
+    Returns:
+        CommandResult or None: Result of the push
+    """
+    cancel_project, old_pipelines = collect_old_pipelines(args, branch,
+                                                          project, mr)
+
+    if args.skip:
+        tout.info('Skipping CI: no pipeline will be created')
+        result = git_push_branch(branch, args, skip_ci=True)
+    else:
+        result = git_push_branch(branch, args, ci_vars=build_ci_vars(args))
+
+    if old_pipelines:
+        cancel_pipelines(cancel_project, old_pipelines, args.dry_run)
+    return result
+
+
+def do_cancel(args, branch):
+    """Cancel pipelines for a branch, without pushing anything
+
+    Cancels the pipeline given by --cancel, or all the active pipelines for
+    the branch if no pipeline was named.
+
+    Args:
+        args (argparse.Namespace): Arguments from cmdline
+        branch (str): Branch name
+
+    Returns:
+        int: Exit code
+    """
+    project = connect_gitlab(args)
+    if not project:
+        return 1
+
+    if args.cancel != CANCEL_ALL:
+        if not args.cancel.isdigit():
+            tout.error(f'Invalid pipeline ID: {args.cancel}')
+            return 1
+        pipelines = [SimpleNamespace(id=int(args.cancel), status='unknown')]
+    else:
+        pipelines = get_active_pipelines(project, branch,
+                                         find_mr(project, branch))
+        if not pipelines:
+            tout.notice(f'No active pipelines for {branch}')
+            return 0
+
+    count = cancel_pipelines(project, pipelines, args.dry_run)
+    return 0 if count else 1
+
+
 def do_merge_request(args):  # pylint: disable=too-many-locals
     """Create a merge request using cover letter from patch series
 
@@ -646,6 +872,7 @@ def do_merge_request(args):  # pylint: disable=too-many-locals
 
     # Check if MR already exists for this branch
     existing_mr = None
+    project = None
     try:
         token = gitlab_api.get_token()
         if token:
@@ -663,13 +890,10 @@ def do_merge_request(args):  # pylint: disable=too-many-locals
         tout.notice(f'dry-run: Create MR \'{title}\'')
         return 0
 
-    # Push branch with CI variables - respects --null and --skip flags
+    # Push branch with CI variables - respects --null, --skip and
+    # --cancel-old flags
     tout.info('Pushing branch...')
-    if args.skip:
-        tout.info('Skipping CI: no pipeline will be created')
-        git_push_branch(branch, args, skip_ci=True)
-    else:
-        git_push_branch(branch, args, ci_vars=build_ci_vars(args))
+    push_with_cancel(args, branch, project, existing_mr)
 
     if existing_mr:
         # Update existing MR
@@ -711,11 +935,10 @@ def do_ci(args):
 
     tout.info(f'Current branch: {branch}')
 
-    if args.skip:
-        tout.info('Skipping CI: no pipeline will be created')
-        result = git_push_branch(branch, args, skip_ci=True)
-    else:
-        result = git_push_branch(branch, args, ci_vars=build_ci_vars(args))
+    if args.cancel:
+        return do_cancel(args, branch)
+
+    result = push_with_cancel(args, branch)
     if result and result.return_code:
         return result.return_code
 
