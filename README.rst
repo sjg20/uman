@@ -126,16 +126,40 @@ Some simple examples::
     # Push and run only on the SJG lab with the 'rpi4' board
     uman ci -l rpi4
 
+    # Push without creating a pipeline at all
+    uman ci -x
+
+    # Include the slow lab jobs, which are otherwise skipped
+    uman ci -m -s -p -L
+
+    # Update a merge request, cancelling the pipelines it supersedes
+    uman ci -fmc
+
+    # Cancel everything running on the current branch
+    uman ci -C
+
+    # Cancel one pipeline
+    uman ci -C 12345
+
     # Dry-run to see what would be executed
     uman --dry-run ci -w
 
 **Options**
 
-- ``-0, --null``: Skip all CI stages (no builds/tests run, MR can merge
-  immediately)
+- ``-0, --null``: Set all CI vars to 0, so a pipeline is created but no
+  builds/tests run (MR can merge immediately)
 - ``-a, --all``: Run all CI stages including lab
+- ``-c, --cancel-old``: Cancel the pipelines which were running before this
+  push, leaving only the new one. Use with ``-m`` to drop the superseded
+  pipelines on a merge request
+- ``-C, --cancel [ID]``: Cancel pipeline ID, or every active pipeline for the
+  current branch (and its merge request) if no ID is given, then exit without
+  pushing
 - ``-d, --dest BRANCH``: Destination branch name (default: current branch name)
 - ``-f, --force``: Force push (required when rewriting branch history)
+- ``-L, --sjg-slow [BOARD]``: Set SJG_LAB_SLOW to run the slow lab jobs
+  (optionally specify one; ``-L help`` lists them). These are skipped by
+  default, including on merge requests
 - ``-l, --sjg [BOARD]``: Set SJG_LAB (optionally specify board)
 - ``-m, --merge``: Create merge request using cover letter from patch series
 - ``-p, --pytest [BOARD]``: Enable PYTEST (optionally specify board name)
@@ -146,6 +170,9 @@ Some simple examples::
 - ``-t, --test-spec SPEC``: Override test specification (e.g. "not sleep",
   "test_ofplatdata")
 - ``-w, --world``: Enable WORLD
+- ``-x, --skip``: Skip CI entirely, so no pipeline is created at all (pushes
+  with ``-o ci.skip``). Unlike ``-0``, which still creates a pipeline with
+  every stage disabled. Takes precedence over the other CI flags
 
 Pytest Targeting Examples
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -908,6 +935,9 @@ without going through pytest. This is faster for quick iteration on C code.
     # List tests in a suite
     uman test -l dm
 
+    # Report every failure in a test, not just the first
+    uman test dm.acpi -k
+
 **Options**:
 
 - ``-b, --build``: Build before running tests
@@ -920,6 +950,8 @@ without going through pytest. This is faster for quick iteration on C code.
 - ``-g, --gdb``: Run sandbox under gdb-multiarch
 - ``--gdb-cmd CMD``: GDB command to run after the test (repeatable; implies -g)
 - ``-j, --jobs JOBS``: Number of parallel jobs (use with -b)
+- ``-k, --soft-fail``: Continue each test after a failure, so that all the
+  failures are reported, not just the first (sandbox ``--soft_fail``)
 - ``-l, --list``: List available tests
 - ``-L, --lto``: Enable LTO when building (use with -b)
 - ``--leak-check``: Check for memory leaks around each test using mallinfo()
@@ -999,9 +1031,16 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
     # Adjust Kconfig setting
     uman build sandbox -a CONFIG_TRACE
 
+    # Merge Kconfig fragments into the defconfig
+    uman build sandbox -c foo.config,bar.config
+
 **Options**:
 
 - ``-a, --adjust-cfg CFG``: Adjust Kconfig setting (can use multiple times)
+- ``-c, --fragments FRAGS``: Comma-separated Kconfig fragments to merge into
+  the defconfig (passed to buildman; each fragment is found in
+  kernel/configs, arch/<arch>/configs or board/ and merged via
+  merge_config.sh)
 - ``-E, --werror``: Treat warnings as errors (sets KCFLAGS=-Werror)
 - ``--fail-on-warning``: Fail if build produces warnings
 - ``-f, --force-reconfig``: Force reconfiguration

@@ -471,8 +471,26 @@ def has_emit_result():
         return False
 
 
+def has_soft_fail():
+    """Check whether the U-Boot tree supports the --soft_fail sandbox flag
+
+    Looks for 'soft_fail' in arch/sandbox/cpu/start.c in the current
+    directory.
+
+    Returns:
+        bool: True if --soft_fail is supported
+    """
+    start_c = os.path.join('arch', 'sandbox', 'cpu', 'start.c')
+    try:
+        with open(start_c, encoding='utf-8') as inf:
+            return 'soft_fail' in inf.read()
+    except OSError:
+        return False
+
+
 def build_ut_cmd(sandbox, specs, full=False, verbose=False, legacy=False,
-                 manual=False, malloc_dump=None, leak_check=False):
+                 manual=False, malloc_dump=None, leak_check=False,
+                 soft_fail=False):
     """Build the sandbox command line for running tests
 
     Args:
@@ -484,6 +502,8 @@ def build_ut_cmd(sandbox, specs, full=False, verbose=False, legacy=False,
         manual (bool): Force manual tests to run
         malloc_dump (str or None): File to write malloc dump to on exit
         leak_check (bool): Check for memory leaks around each test
+        soft_fail (bool): Continue a test after an assertion fails, so that
+            all the failures are reported, not just the first
 
     Returns:
         list: Command and arguments
@@ -500,6 +520,9 @@ def build_ut_cmd(sandbox, specs, full=False, verbose=False, legacy=False,
     # Add -v to sandbox to show test output
     if verbose:
         cmd.append('-v')
+
+    if soft_fail:
+        cmd.append('--soft_fail')
 
     # Build ut commands from specs; use -E to emit Result: lines
     # Flags must come before suite name
@@ -962,11 +985,17 @@ def run_tests(sandbox, specs, args, col):
     if needs_dm_init(specs) and not ensure_dm_init_files():
         return 1
 
+    soft_fail = args.soft_fail
+    if soft_fail and not has_soft_fail():
+        tout.warning('This U-Boot tree does not support --soft_fail')
+        soft_fail = False
+
     cmd = build_ut_cmd(sandbox, specs, full=args.flattree_too,
                        verbose=args.test_verbose, legacy=args.legacy,
                        manual=args.manual,
                        malloc_dump=args.malloc_dump,
-                       leak_check=args.leak_check)
+                       leak_check=args.leak_check,
+                       soft_fail=soft_fail)
 
     if args.gdb or args.bt or args.gdb_cmd:
         return run_gdb(cmd, args)

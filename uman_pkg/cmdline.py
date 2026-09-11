@@ -11,6 +11,9 @@ import argparse
 import os
 import sys
 
+# Value of --cancel when no pipeline ID is given, meaning 'all of them'
+CANCEL_ALL = 'all'
+
 
 def get_git_actions():
     """Get git actions from cmdgit module
@@ -141,15 +144,27 @@ def add_ci_subparser(subparsers):
     pytest_help = 'Enable PYTEST: to select a particular one: -p help'
     sjg_help = 'Enable SJG_LAB: to select a particular board: -l help'
     sage_help = 'Enable SAGE_LAB: to select a particular board: -S help'
+    sjg_slow_help = ('Enable SJG_LAB_SLOW (slow lab jobs, skipped by '
+                     'default): to select a particular one: -L help')
 
     ci.add_argument('-0', '--null', action='store_true',
                     help='Set all CI vars to 0')
     ci.add_argument('-a', '--all', action='store_true',
                     help='Run all CI stages including lab')
+    ci.add_argument('-c', '--cancel-old', action='store_true',
+                    dest='cancel_old',
+                    help='Cancel the pipelines running before this push, so '
+                    'only the new one is left')
+    ci.add_argument('-C', '--cancel', nargs='?', const=CANCEL_ALL,
+                    default=None, metavar='ID',
+                    help='Cancel pipeline ID, or all active pipelines for the '
+                    'branch, then exit without pushing')
     ci.add_argument('-d', '--dest', metavar='BRANCH', default=None,
                     help='Destination branch name (default: current branch)')
     ci.add_argument('-f', '--force', action='store_true',
                     help='Force push to remote branch')
+    ci.add_argument('-L', '--sjg-slow', nargs='?', const='1', default=None,
+                    dest='sjg_slow', help=sjg_slow_help)
     ci.add_argument('-l', '--sjg', nargs='?', const='1', default=None,
                     help=sjg_help)
     ci.add_argument('-m', '--merge', action='store_true',
@@ -166,6 +181,8 @@ def add_ci_subparser(subparsers):
     ci.add_argument('-t', '--test-spec', metavar='SPEC',
                     help="Override test spec (e.g. 'not sleep')")
     ci.add_argument('-w', '--world', action='store_true', help='Enable WORLD')
+    ci.add_argument('-x', '--skip', action='store_true',
+                    help='Skip CI entirely, so no pipeline is created')
     return ci
 
 
@@ -363,6 +380,9 @@ def add_build_subparser(subparsers):
     bld.add_argument('-a', '--adjust-cfg', action='append', metavar='CFG',
                      dest='adjust_cfg',
                      help='Adjust Kconfig setting (can use multiple times)')
+    bld.add_argument('-c', '--fragments', metavar='FRAGS',
+                     help='Comma-separated Kconfig fragments to merge into '
+                          'the defconfig')
     bld.add_argument('-f', '--force-reconfig', action='store_true',
                      help='Force reconfiguration')
     bld.add_argument('-E', '--werror', action='store_true',
@@ -445,6 +465,9 @@ def add_test_subparser(subparsers):
     test.add_argument(
         '--flattree-too', action='store_true',
         help='Run both live-tree and flat-tree tests (default: live-tree only)')
+    test.add_argument(
+        '-k', '--soft-fail', action='store_true', dest='soft_fail',
+        help='Continue each test after a failure, to report all of them')
     test.add_argument(
         '-l', '--list', action='store_true', dest='list_tests',
         help='List available tests')

@@ -18,6 +18,9 @@ try:
 except ImportError:
     YAML_AVAILABLE = False
 
+# Stage used by the slow lab jobs, which are gated on SJG_LAB_SLOW
+SLOW_STAGE = 'sjg-lab-slow'
+
 
 def find_gitlab_ci_file():
     """Find the GitLab CI file in the U-Boot source tree
@@ -65,6 +68,7 @@ class GitLabCIParser:
         self._boards = []
         self._job_names = []
         self._sage_names = []
+        self._slow_roles = []
         self._parse_file()
 
     def _parse_file(self):
@@ -75,8 +79,9 @@ class GitLabCIParser:
         roles = set()
         boards = set()
         job_names = set()
+        slow_roles = set()
 
-        self._extract(self._filepath, roles, boards, job_names)
+        self._extract(self._filepath, roles, boards, job_names, slow_roles)
 
         # Also parse the sage-lab include if present, to discover sage jobs
         sage_names = set()
@@ -90,10 +95,15 @@ class GitLabCIParser:
         self._boards = sorted(list(boards))
         self._job_names = sorted(list(job_names))
         self._sage_names = sorted(list(sage_names))
+        self._slow_roles = sorted(list(slow_roles))
 
     @staticmethod
-    def _extract(path, roles, boards, job_names):
-        """Extract ROLE, TEST_PY_BD and pytest job names from a YAML file"""
+    def _extract(path, roles, boards, job_names, slow_roles):
+        """Extract ROLE, TEST_PY_BD and pytest job names from a YAML file
+
+        Slow lab jobs (stage 'sjg-lab-slow') have their ROLE added to
+        slow_roles as well as roles, so they can be selected on their own.
+        """
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
 
@@ -119,7 +129,14 @@ class GitLabCIParser:
                     continue
 
                 if 'ROLE' in variables:
-                    roles.add(str(variables['ROLE']))
+                    role = str(variables['ROLE'])
+                    roles.add(role)
+                    # The '<<:' merge key is resolved by yaml, so the stage
+                    # from the job's template is visible here. Skip the
+                    # templates themselves, which start with '.'
+                    if (job_config.get('stage') == SLOW_STAGE and
+                            not job_name.startswith('.')):
+                        slow_roles.add(role)
                 if 'TEST_PY_BD' in variables:
                     boards.add(str(variables['TEST_PY_BD']).strip('"'))
 
@@ -183,3 +200,8 @@ class GitLabCIParser:
     def sage_names(self):
         """Get list of valid SAGE_LAB job names"""
         return self._sage_names
+
+    @property
+    def slow_roles(self):
+        """Get list of valid SJG_LAB_SLOW role values (slow lab jobs)"""
+        return self._slow_roles

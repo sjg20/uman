@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from u_boot_pylib import command
@@ -122,6 +123,8 @@ def make_args(**kwargs):
         'build': False,
         'build_dir': None,
         'c_test': False,
+        'cancel': None,
+        'cancel_old': False,
         'cmd': 'ci',
         'debug': False,
         'dest': None,
@@ -156,6 +159,8 @@ def make_args(**kwargs):
         'show_output': False,
         'sage': None,
         'sjg': None,
+        'sjg_slow': None,
+        'skip': False,
         'suites': False,
         'test_spec': [],
         'timing': None,
@@ -482,6 +487,25 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(1, len(trace_indices))
         self.assertEqual('TRACE', cmd[trace_indices[0] + 1])
 
+    def test_build_board_fragments(self):
+        """Test that build_board() passes --fragments to buildman"""
+        cap = []
+
+        def mock_exec_cmd(cmd, dry_run=False, env=None, capture=True):
+            del dry_run, env, capture  # unused
+            cap.append(cmd)
+            return command.CommandResult(return_code=0)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                with terminal.capture():
+                    build.build_board('sandbox',
+                                      fragments='foo.config,bar.config')
+
+        cmd = cap[0]
+        idx = cmd.index('--fragments')
+        self.assertEqual('foo.config,bar.config', cmd[idx + 1])
+
     def test_build_fresh_flag(self):
         """Test -F/--fresh flag"""
         args = cmdline.parse_args(['build', 'sandbox', '-F'])
@@ -565,6 +589,24 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(2, cmd.count('-a'))
         self.assertIn('FOO=y', cmd)
         self.assertIn('BAR=n', cmd)
+
+    def test_build_fragments_option(self):
+        """Test -c/--fragments option"""
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-c', 'foo.config'])
+        self.assertEqual('foo.config', args.fragments)
+
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '--fragments', 'foo.config,bar.config'])
+        self.assertEqual('foo.config,bar.config', args.fragments)
+
+    def test_get_cmd_fragments(self):
+        """Test that --fragments is passed to buildman"""
+        args = cmdline.parse_args(
+            ['build', 'sandbox', '-c', 'foo.config,bar.config'])
+        cmd = build.get_cmd(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual(1, cmd.count('--fragments'))
+        self.assertIn('foo.config,bar.config', cmd)
 
     def test_build_in_tree_flag(self):
         """Test -I/--in-tree flag uses -i for buildman"""
@@ -2460,6 +2502,41 @@ class TestGitRebase(TestBase, GitRepoMixin):
         self.assertFalse(self.is_rebasing())
         self.assertEqual('Commit 4', self.get_head_subject())
 
+    def test_real_rn_finishes_at_end(self):
+        """Test rn finishes the rebase when no commits remain to edit"""
+        # Start rebase with rf 2 (last 2 commits), stops at Commit 3
+        args = cmdline.parse_args(['git', 'rf', '2'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rf(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Rebasing \d+/\d+: stopped at [0-9a-f]+\.\.\. Commit 3\n')
+        self.assertFalse(err.getvalue())
+        self.assertTrue(self.is_rebasing())
+        self.assertEqual('Commit 3', self.get_head_subject())
+
+        # rn to continue to the last commit (also set to edit)
+        args = cmdline.parse_args(['git', 'rn'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rn(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Rebasing \d+/\d+: stopped at [0-9a-f]+\.\.\. Commit 4\n')
+        self.assertFalse(err.getvalue())
+        self.assertTrue(self.is_rebasing())
+        self.assertEqual('Commit 4', self.get_head_subject())
+
+        # rn again with nothing left - should finish the rebase
+        args = cmdline.parse_args(['git', 'rn'])
+        with terminal.capture() as (out, err):
+            result = cmdgit.do_rn(args)
+        self.assertEqual(0, result.return_code)
+        self.assertRegex(out.getvalue(),
+                         r'Successfully rebased and updated refs/heads/\w+\n')
+        self.assertFalse(err.getvalue())
+        self.assertFalse(self.is_rebasing())
+        self.assertEqual('Commit 4', self.get_head_subject())
+
     def test_real_rn_with_skip(self):
         """Test rn 2 to skip ahead and edit the 2nd remaining commit"""
         # Start rebase with rp 1 (stop at first commit)
@@ -2799,6 +2876,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2812,6 +2890,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2825,6 +2904,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '1',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '1',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2838,6 +2918,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '1',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2851,6 +2932,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': 'rpi4',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2864,6 +2946,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2877,6 +2960,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': 'Raspberry Pi 4',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2890,6 +2974,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
             'TEST_SPEC': 'not sleep',
         }
         self.assertEqual(expected, ci_vars)
@@ -2904,6 +2989,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2917,6 +3003,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': 'bbb',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2931,6 +3018,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
         self.assertNotIn('TEST_SPEC', ci_vars)
@@ -2944,6 +3032,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
             'TEST_SPEC': 'test_ofplatdata',
         }
         self.assertEqual(expected, ci_vars)
@@ -2958,6 +3047,7 @@ class TestUmanCIVars(TestBase):
             'WORLD': '0',
             'SJG_LAB': '',
             'SAGE_LAB': '',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
@@ -2975,13 +3065,14 @@ class TestUmanCIVars(TestBase):
             'WORLD': '1',
             'SJG_LAB': '1',
             'SAGE_LAB': '1',
+            'SJG_LAB_SLOW': '',
         }
         self.assertEqual(expected, ci_vars)
 
     def test_build_commit_tags_no_skip(self):
         """Test build_commit_tags with no skip flags (all enabled)"""
         args = make_args(suites=True, pytest='1', world=True, sjg='1',
-                         sage='1')
+                         sage='1', sjg_slow='1')
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('', tags)
@@ -2993,7 +3084,7 @@ class TestUmanCIVars(TestBase):
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
             '[skip-suites] [skip-pytest] [skip-world] [skip-sjg] '
-            '[skip-sage]', tags)
+            '[skip-sage] [skip-sjg-slow]', tags)
 
     def test_build_commit_tags_skip_specific(self):
         """Test build_commit_tags with specific stages enabled"""
@@ -3001,13 +3092,23 @@ class TestUmanCIVars(TestBase):
         ci_vars = control.build_ci_vars(args)
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual(
-            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage]', tags)
+            '[skip-pytest] [skip-world] [skip-sjg] [skip-sage] '
+            '[skip-sjg-slow]', tags)
 
     def test_build_commit_tags_skip_world_only(self):
         """Test build_commit_tags with world skipped"""
         # suites and pytest enabled, world skipped
         args = make_args(suites=True, pytest='1')
         ci_vars = control.build_ci_vars(args)
+        tags = control.build_commit_tags(args, ci_vars)
+        self.assertEqual(
+            '[skip-world] [skip-sjg] [skip-sage] [skip-sjg-slow]', tags)
+
+    def test_build_commit_tags_sjg_slow(self):
+        """Test build_commit_tags omits [skip-sjg-slow] when slow is enabled"""
+        args = make_args(suites=True, pytest='1', sjg_slow='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('1', ci_vars['SJG_LAB_SLOW'])
         tags = control.build_commit_tags(args, ci_vars)
         self.assertEqual('[skip-world] [skip-sjg] [skip-sage]', tags)
 
@@ -3086,7 +3187,7 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
             '-o ci.variable=WORLD=1 -o ci.variable=SJG_LAB= '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
 
     def test_ci_specific_variables(self):
@@ -3100,7 +3201,7 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=1 -o ci.variable=PYTEST=1 '
             '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB=rpi4 '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
 
     def test_ci_no_ci_flag(self):
@@ -3114,8 +3215,69 @@ class TestUmanCI(TestBase):
         self.assertEqual(
             'git push -o ci.variable=SUITES=0 -o ci.variable=PYTEST=0 '
             '-o ci.variable=WORLD=0 -o ci.variable=SJG_LAB= '
-            '-o ci.variable=SAGE_LAB= ci master\n',
+            '-o ci.variable=SAGE_LAB= -o ci.variable=SJG_LAB_SLOW= ci master\n',
             out.getvalue())
+
+    def test_ci_skip(self):
+        """Test CI command with --skip pushes with ci.skip and no vars"""
+        self._create_git_repo()
+
+        args = make_args(dry_run=True, skip=True)
+        with terminal.capture() as (out, _):
+            res = control.do_ci(args)
+        self.assertEqual(0, res)
+        self.assertEqual('git push -o ci.skip ci master\n', out.getvalue())
+
+    def test_ci_skip_overrides_vars(self):
+        """Test --skip takes precedence over other CI flags"""
+        self._create_git_repo()
+
+        args = make_args(dry_run=True, skip=True, suites=True, world=True)
+        with terminal.capture() as (out, _):
+            res = control.do_ci(args)
+        self.assertEqual(0, res)
+        self.assertEqual('git push -o ci.skip ci master\n', out.getvalue())
+
+    def test_ci_sjg_slow_option(self):
+        """Test -L/--sjg-slow option parsing"""
+        args = cmdline.parse_args(['ci', '-L'])
+        self.assertEqual('1', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci', '-L', 'efi-x86_64-uboot-iso-install'])
+        self.assertEqual('efi-x86_64-uboot-iso-install', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci', '--sjg-slow'])
+        self.assertEqual('1', args.sjg_slow)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertIsNone(args.sjg_slow)
+
+    def test_ci_slow_skipped_by_default(self):
+        """Test the slow lab jobs are skipped unless asked for"""
+        # 'uman ci -m -s -p' must not run the slow lab jobs
+        args = make_args(merge=True, suites=True, pytest='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('', ci_vars['SJG_LAB_SLOW'])
+        self.assertIn('[skip-sjg-slow]',
+                      control.build_commit_tags(args, ci_vars))
+
+        # Adding -L asks for them, so no skip tag
+        args = make_args(merge=True, suites=True, pytest='1', sjg_slow='1')
+        ci_vars = control.build_ci_vars(args)
+        self.assertEqual('1', ci_vars['SJG_LAB_SLOW'])
+        self.assertNotIn('[skip-sjg-slow]',
+                         control.build_commit_tags(args, ci_vars))
+
+    def test_ci_skip_option(self):
+        """Test -x/--skip option parsing"""
+        args = cmdline.parse_args(['ci', '-x'])
+        self.assertTrue(args.skip)
+
+        args = cmdline.parse_args(['ci', '--skip'])
+        self.assertTrue(args.skip)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertFalse(args.skip)
 
     def test_ci_custom_remote(self):
         """Test CI command with -r uses the specified remote"""
@@ -4235,6 +4397,231 @@ class TestUmanMergeRequest(TestBase):
         self.assertEqual('New Title', mock_mr.title)
         self.assertEqual('New Description', mock_mr.description)
         mock_mr.save.assert_called_once()
+
+
+def make_pipe(pipe_id, status='running'):
+    """Create a stand-in for a GitLab pipeline object
+
+    Args:
+        pipe_id (int): Pipeline ID
+        status (str): Pipeline status
+
+    Returns:
+        SimpleNamespace: Object with id and status attributes
+    """
+    return SimpleNamespace(id=pipe_id, status=status)
+
+
+class TestUmanCancel(TestBase):
+    """Tests for cancelling CI pipelines"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.NOTICE)
+
+    def test_cancel_option_parsing(self):
+        """Test -C/--cancel and -c/--cancel-old parsing"""
+        args = cmdline.parse_args(['ci', '-C'])
+        self.assertEqual('all', args.cancel)
+        self.assertFalse(args.cancel_old)
+
+        args = cmdline.parse_args(['ci', '-C', '1234'])
+        self.assertEqual('1234', args.cancel)
+
+        args = cmdline.parse_args(['ci', '--cancel', '1234'])
+        self.assertEqual('1234', args.cancel)
+
+        args = cmdline.parse_args(['ci', '-c'])
+        self.assertTrue(args.cancel_old)
+        self.assertIsNone(args.cancel)
+
+        args = cmdline.parse_args(['ci'])
+        self.assertIsNone(args.cancel)
+        self.assertFalse(args.cancel_old)
+
+    def test_get_active_pipelines(self):
+        """Test only unfinished pipelines are returned, newest first"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [
+            make_pipe(1, 'success'), make_pipe(2, 'running'),
+            make_pipe(3, 'failed'), make_pipe(4, 'pending'),
+            make_pipe(5, 'canceled'),
+        ]
+        pipes = control.get_active_pipelines(project, 'my-branch')
+        self.assertEqual([4, 2], [pipe.id for pipe in pipes])
+
+    def test_get_active_pipelines_with_mr(self):
+        """Test merge-request pipelines are included, without duplicates"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(2, 'running')]
+        mr = mock.MagicMock()
+        mr.pipelines.list.return_value = [make_pipe(2, 'running'),
+                                          make_pipe(7, 'running')]
+        pipes = control.get_active_pipelines(project, 'my-branch', mr)
+        self.assertEqual([7, 2], [pipe.id for pipe in pipes])
+
+    def test_cancel_pipelines(self):
+        """Test cancel_pipelines cancels each pipeline"""
+        project = mock.MagicMock()
+        with terminal.capture() as (out, err):
+            count = control.cancel_pipelines(
+                project, [make_pipe(4), make_pipe(2)])
+        self.assertEqual(2, count)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 4\nCancelled pipeline 2\n',
+                         out.getvalue())
+        self.assertEqual([mock.call(4), mock.call(2)],
+                         project.pipelines.get.call_args_list)
+
+    def test_cancel_pipelines_dry_run(self):
+        """Test dry-run shows the pipelines without cancelling them"""
+        project = mock.MagicMock()
+        with terminal.capture() as (out, err):
+            count = control.cancel_pipelines(project, [make_pipe(4)],
+                                             dry_run=True)
+        self.assertEqual(1, count)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('dry-run: Cancel pipeline 4 (running)\n',
+                         out.getvalue())
+        project.pipelines.get.assert_not_called()
+
+    def test_do_cancel_all(self):
+        """Test --cancel with no ID cancels every active pipeline"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4), make_pipe(2)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 4\nCancelled pipeline 2\n',
+                         out.getvalue())
+
+    def test_do_cancel_one(self):
+        """Test --cancel with an ID cancels just that pipeline"""
+        project = mock.MagicMock()
+        args = make_args(cancel='1234')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('Cancelled pipeline 1234\n', out.getvalue())
+        # The branch should not be searched when an ID is given
+        project.pipelines.list.assert_not_called()
+
+    def test_do_cancel_bad_id(self):
+        """Test --cancel with a non-numeric ID reports an error"""
+        args = make_args(cancel='wibble')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=mock.MagicMock()):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(1, result)
+        self.assertFalse(out.getvalue())
+        self.assertEqual('Invalid pipeline ID: wibble\n', err.getvalue())
+
+    def test_do_cancel_nothing_active(self):
+        """Test --cancel says so when there is nothing to cancel"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(1, 'success')]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertEqual('No active pipelines for my-branch\n',
+                         out.getvalue())
+
+    def test_do_cancel_no_connection(self):
+        """Test --cancel fails when GitLab cannot be reached"""
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab', return_value=None):
+            with terminal.capture():
+                result = control.do_cancel(args, 'my-branch')
+        self.assertEqual(1, result)
+
+    def test_collect_old_pipelines_disabled(self):
+        """Test no GitLab access happens without --cancel-old"""
+        args = make_args()
+        with mock.patch.object(control, 'connect_gitlab') as connect:
+            project, pipes = control.collect_old_pipelines(args, 'my-branch')
+        self.assertIsNone(project)
+        self.assertFalse(pipes)
+        connect.assert_not_called()
+
+    def test_collect_old_pipelines(self):
+        """Test --cancel-old collects the pipelines running before a push"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4), make_pipe(2)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with terminal.capture() as (out, err):
+                got_project, pipes = control.collect_old_pipelines(
+                    args, 'my-branch')
+        self.assertEqual(project, got_project)
+        self.assertEqual([4, 2], [pipe.id for pipe in pipes])
+        self.assertFalse(err.getvalue())
+        # Nothing is cancelled yet, and the plan is only shown with -v
+        self.assertFalse(out.getvalue())
+
+    def test_collect_old_pipelines_reuses_project(self):
+        """Test a project passed in is used, without connecting again"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        args = make_args(cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab') as connect:
+            with terminal.capture():
+                got_project, pipes = control.collect_old_pipelines(
+                    args, 'my-branch', project)
+        self.assertEqual(project, got_project)
+        self.assertEqual([4], [pipe.id for pipe in pipes])
+        connect.assert_not_called()
+
+    def test_ci_cancel_old_after_push(self):
+        """Test 'um ci -c' cancels the old pipelines after pushing"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        project.mergerequests.list.return_value = []
+        args = make_args(dry_run=True, cancel_old=True)
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with mock.patch.object(control, 'command') as cmd:
+                cmd.output_one_line.return_value = 'my-branch'
+                with terminal.capture() as (out, err):
+                    result = control.do_ci(args)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        stdout = out.getvalue()
+        # The push must come before the cancel, so the new pipeline exists
+        self.assertLess(stdout.index('git push'),
+                        stdout.index('Cancel pipeline 4'))
+
+    def test_ci_cancel_skips_push(self):
+        """Test 'um ci -C' cancels without pushing anything"""
+        project = mock.MagicMock()
+        project.pipelines.list.return_value = [make_pipe(4)]
+        project.mergerequests.list.return_value = []
+        args = make_args(cancel='all')
+        with mock.patch.object(control, 'connect_gitlab',
+                               return_value=project):
+            with mock.patch.object(control, 'command') as cmd:
+                cmd.output_one_line.return_value = 'my-branch'
+                with terminal.capture() as (out, err):
+                    result = control.do_ci(args)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertNotIn('git push', out.getvalue())
+        self.assertIn('Cancelled pipeline 4', out.getvalue())
 
 
 class TestSettings(TestBase):
@@ -5840,6 +6227,21 @@ int main(void) { return 0; }
         self.assertEqual(['/sb', '-T', '-F', '-c', 'ut -E -m dm'], cmd)
 
     @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
+    @mock.patch.object(cmdtest, 'has_no_flat', return_value=True)
+    def test_build_ut_cmd_soft_fail(self, *_):
+        """Test build_ut_cmd with soft_fail adds --soft_fail"""
+        cmd = cmdtest.build_ut_cmd('/sb', [('dm', None)], soft_fail=True)
+        self.assertEqual(
+            ['/sb', '-T', '-F', '--soft_fail', '-c', 'ut -E dm'], cmd)
+
+    @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
+    @mock.patch.object(cmdtest, 'has_no_flat', return_value=True)
+    def test_build_ut_cmd_no_soft_fail(self, *_):
+        """Test build_ut_cmd omits --soft_fail by default"""
+        cmd = cmdtest.build_ut_cmd('/sb', [('dm', None)])
+        self.assertNotIn('--soft_fail', cmd)
+
+    @mock.patch.object(cmdtest, 'has_emit_result', return_value=True)
     @mock.patch.object(cmdtest, 'has_no_flat', return_value=False)
     def test_build_ut_cmd_no_flat_unsupported(self, *_):
         """Test build_ut_cmd omits -F when source tree lacks support"""
@@ -6122,6 +6524,51 @@ Missing required argument 'fs_image' for test 'pxe_test_sysboot'
         self.assertIn('No results detected', err.getvalue())
         # Error message should be shown in output
         self.assertIn('Missing required argument', out.getvalue())
+
+    def test_run_tests_soft_fail(self):
+        """Test run_tests passes --soft_fail to the sandbox"""
+        cap = []
+
+        def mock_run(*args, **_kwargs):
+            cap.append(args)
+            return command.CommandResult(return_code=0,
+                                         stdout='Result: PASS dm_test_one\n')
+
+        args = cmdline.parse_args(['test', 'dm', '-k'])
+        self.assertTrue(args.soft_fail)
+        col = terminal.Color()
+        with mock.patch.object(cmdtest, 'has_soft_fail', return_value=True):
+            with mock.patch.object(command, 'run_one', mock_run):
+                with mock.patch.object(cmdtest, 'ensure_dm_init_files',
+                                       return_value=True):
+                    with terminal.capture() as (_, err):
+                        result = cmdtest.run_tests('/path/to/sandbox',
+                                                   [('dm', None)], args, col)
+        self.assertEqual(0, result)
+        self.assertFalse(err.getvalue())
+        self.assertIn('--soft_fail', cap[0])
+
+    def test_run_tests_soft_fail_unsupported(self):
+        """Test run_tests warns and drops --soft_fail on an older tree"""
+        cap = []
+
+        def mock_run(*args, **_kwargs):
+            cap.append(args)
+            return command.CommandResult(return_code=0,
+                                         stdout='Result: PASS dm_test_one\n')
+
+        args = cmdline.parse_args(['test', 'dm', '-k'])
+        col = terminal.Color()
+        with mock.patch.object(cmdtest, 'has_soft_fail', return_value=False):
+            with mock.patch.object(command, 'run_one', mock_run):
+                with mock.patch.object(cmdtest, 'ensure_dm_init_files',
+                                       return_value=True):
+                    with terminal.capture() as (_, err):
+                        result = cmdtest.run_tests('/path/to/sandbox',
+                                                   [('dm', None)], args, col)
+        self.assertEqual(0, result)
+        self.assertIn('does not support --soft_fail', err.getvalue())
+        self.assertNotIn('--soft_fail', cap[0])
 
     def test_run_tests_parses_summary(self):
         """Test run_tests uses summary line when -E is unavailable"""
