@@ -427,7 +427,13 @@ This:
    own resolver and may not see local hostnames) and adds an entry to
    ``/etc/hosts`` inside the container so ``ssh kea`` works.
 3. Runs ``ssh-copy-id`` from inside the container, prompting once for
-   the destination password to push the public key.
+   the destination password to push the public key. If the server
+   identifies as OpenSSH for Windows, it runs a PowerShell script over
+   ssh instead. For members of the Administrators group this adds the
+   key to ``%ProgramData%\ssh\administrators_authorized_keys`` (since
+   Windows OpenSSH ignores the user's own file for them) and restricts
+   that file to SYSTEM and Administrators, as sshd requires. Other users
+   get ``%USERPROFILE%\.ssh\authorized_keys``.
 4. Adds a ``Host`` / ``User`` block to ``~/.ssh/config`` inside the
    container so ``ssh kea`` uses the right login name automatically.
 
@@ -1082,6 +1088,9 @@ various architectures::
     uman setup xtensa
     uman setup adi-ldr
 
+    # Install LXD for Claude Code containers (um cc)
+    uman setup cc
+
     # Create git action symlinks in ~/bin
     uman setup aliases
 
@@ -1101,6 +1110,10 @@ various architectures::
 
 - ``aliases``: Create symlinks for git action commands (rf, rc, rd, etc.) and
   cg (config grep) in a directory. See `Symlink Invocation`_ above.
+- ``cc``: Install LXD (the lxd snap), initialise it with ``lxd init
+  --minimal`` and add your user to the ``lxd`` group, so ``um cc`` can create
+  Claude Code containers. Log out and back in afterwards for the group change
+  to take effect. Uses ``snap`` and ``usermod`` with sudo.
 - ``efi``: Install QEMU EFI firmware packages (OVMF for x86/IA-32,
   qemu-efi for ARM, ARM64 and RISC-V). Uses ``apt-get`` with sudo.
 - ``gcc``: Install GCC cross-compilers and build dependencies. Uses

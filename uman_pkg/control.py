@@ -773,7 +773,7 @@ def collect_old_pipelines(args, branch, project=None, mr=None):
     return project, pipelines
 
 
-def push_with_cancel(args, branch, project=None, mr=None):
+def push_with_cancel(args, branch, project=None, mr=None, skip_ci=False):
     """Push a branch, cancelling the pipelines it supersedes
 
     With --cancel-old, the pipelines running beforehand are cancelled once
@@ -784,6 +784,8 @@ def push_with_cancel(args, branch, project=None, mr=None):
         branch (str): Branch name to push
         project (Project): GitLab project, if already connected, else None
         mr (MergeRequest): Merge request for the branch, if already known
+        skip_ci (bool): True to push without creating a pipeline, because
+            the caller is about to create a merge request, which starts one
 
     Returns:
         CommandResult or None: Result of the push
@@ -793,6 +795,10 @@ def push_with_cancel(args, branch, project=None, mr=None):
 
     if args.skip:
         tout.info('Skipping CI: no pipeline will be created')
+        result = git_push_branch(branch, args, skip_ci=True)
+    elif skip_ci:
+        tout.info('Skipping the branch pipeline: the new merge request '
+                  'starts one')
         result = git_push_branch(branch, args, skip_ci=True)
     else:
         result = git_push_branch(branch, args, ci_vars=build_ci_vars(args))
@@ -891,9 +897,12 @@ def do_merge_request(args):  # pylint: disable=too-many-locals
         return 0
 
     # Push branch with CI variables - respects --null, --skip and
-    # --cancel-old flags
+    # --cancel-old flags. Without an MR yet, the push would start a branch
+    # pipeline and creating the MR another, so push without one; the MR
+    # pipeline takes its settings from the tags in the description
     tout.info('Pushing branch...')
-    push_with_cancel(args, branch, project, existing_mr)
+    push_with_cancel(args, branch, project, existing_mr,
+                     skip_ci=not existing_mr)
 
     if existing_mr:
         # Update existing MR

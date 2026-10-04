@@ -8,6 +8,7 @@
 
 import argparse
 import ast
+import base64
 import os
 import shutil
 import subprocess
@@ -4398,6 +4399,42 @@ class TestUmanMergeRequest(TestBase):
         self.assertEqual('New Description', mock_mr.description)
         mock_mr.save.assert_called_once()
 
+        # The MR exists, so the push starts the MR pipeline itself
+        self.assertFalse(_mock_push.call_args.kwargs.get('skip_ci'))
+
+    @mock.patch('pickman.gitlab_api', create=True)
+    @mock.patch('gitlab.Gitlab')
+    @mock.patch('uman_pkg.control.extract_mr_info')
+    @mock.patch('u_boot_pylib.gitutil.get_branch')
+    @mock.patch('uman_pkg.control.git_push_branch')
+    def test_merge_request_new_skips_branch_pipeline(
+            self, mock_push, mock_get_branch, mock_extract, mock_gitlab_cls,
+            mock_api):
+        """Test that creating an MR pushes without a branch pipeline"""
+        mock_get_branch.return_value = 'test-branch'
+        mock_extract.return_value = ('Title', 'Description', '')
+        mock_api.get_remote_url.return_value = \
+            'https://gitlab.com/user/repo.git'
+        mock_api.parse_url.return_value = ('gitlab.com', 'user/repo')
+        mock_api.get_token.return_value = 'fake-token'
+        mock_api.create_mr.return_value = \
+            'https://gitlab.com/user/repo/-/merge_requests/2'
+
+        # No MR exists yet
+        mock_project = mock.MagicMock()
+        mock_project.mergerequests.list.return_value = []
+        mock_gitlab_cls.return_value.projects.get.return_value = mock_project
+
+        args = make_args(merge=True)
+        with terminal.capture():
+            result = control.do_merge_request(args)
+
+        self.assertEqual(0, result)
+        mock_api.create_mr.assert_called_once()
+
+        # Creating the MR starts its pipeline, so the push must not
+        self.assertTrue(mock_push.call_args.kwargs.get('skip_ci'))
+
 
 def make_pipe(pipe_id, status='running'):
     """Create a stand-in for a GitLab pipeline object
@@ -4759,8 +4796,10 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
                                        return_value='simon'):
                     with mock.patch.object(cc.socket_mod, 'gethostbyname',
                                            return_value='10.0.0.5'):
-                        with terminal.capture():
-                            rc = cc.setup_ssh_access('mybox', 'host.lan')
+                        with mock.patch.object(cc, 'is_windows_ssh',
+                                               return_value=False):
+                            with terminal.capture():
+                                rc = cc.setup_ssh_access('mybox', 'host.lan')
         self.assertEqual(0, rc)
         # The ssh-copy-id call should target simon@host.lan
         copy_call = next(c for c in calls if c[0] == 'exec_cmd')
@@ -4776,6 +4815,79 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(1, len(config_calls))
         self.assertIn('Host host.lan', config_calls[0][2])
         self.assertIn('User simon', config_calls[0][2])
+
+    def test_setup_ssh_access_windows(self):
+        """Test setup_ssh_access uses PowerShell for a Windows host"""
+        calls = []
+        key = 'ssh-ed25519 AAAAkey ubuntu@mybox'
+
+        def fake_lxc_exec(name, cmd, dry_run=False, user=None):  # pylint: disable=unused-argument
+            calls.append(('lxc_exec', name, cmd, user))
+            stdout = f'{key}\n' if cmd.startswith('cat ') else ''
+            return command.CommandResult(return_code=0, stdout=stdout,
+                                         stderr='')
+
+        def fake_exec_cmd(cmd, dry_run, capture=False):  # pylint: disable=unused-argument
+            calls.append(('exec_cmd', cmd))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        with mock.patch.object(cc, 'lxc_exec', side_effect=fake_lxc_exec):
+            with mock.patch.object(cc, 'exec_cmd', side_effect=fake_exec_cmd):
+                with mock.patch.object(cc.socket_mod, 'gethostbyname',
+                                       return_value='10.0.0.5'):
+                    with mock.patch.object(cc, 'is_windows_ssh',
+                                           return_value=True):
+                        with terminal.capture():
+                            rc = cc.setup_ssh_access('mybox', 'bob@winbox')
+        self.assertEqual(0, rc)
+        copy_cmd = next(c for c in calls if c[0] == 'exec_cmd')[1]
+        self.assertEqual(
+            ['lxc', 'exec', 'mybox', '--', 'sudo', '-iu', 'ubuntu', 'ssh',
+             '-o', 'StrictHostKeyChecking=accept-new', 'bob@winbox'] +
+            cc.windows_key_cmd(key), copy_cmd)
+        self.assertNotIn('ssh-copy-id', copy_cmd)
+
+    def test_windows_key_cmd(self):
+        """Test windows_key_cmd encodes a script for the right key file"""
+        cmd = cc.windows_key_cmd("ssh-ed25519 AAAAkey it's\n")
+        self.assertEqual(['powershell', '-NoProfile', '-NonInteractive',
+                          '-EncodedCommand'], cmd[:4])
+        script = base64.b64decode(cmd[4]).decode('utf-16-le')
+        self.assertIn("$k = 'ssh-ed25519 AAAAkey it''s'\n", script)
+        self.assertIn('S-1-5-32-544', script)
+        self.assertIn(
+            r'$f = "$env:ProgramData\ssh\administrators_authorized_keys"',
+            script)
+        self.assertIn(r'$f = "$d\authorized_keys"', script)
+        self.assertIn("/inheritance:r /grant '*S-1-5-32-544:F' "
+                      "/grant '*S-1-5-18:F'", script)
+
+    def test_is_windows_ssh(self):
+        """Test is_windows_ssh checks the server banner"""
+        def fake_conn(banner):
+            sock = mock.MagicMock()
+            sock.__enter__.return_value.recv.return_value = banner
+            return mock.patch.object(cc.socket_mod, 'create_connection',
+                                     return_value=sock)
+
+        with fake_conn(b'SSH-2.0-OpenSSH_for_Windows_9.5\r\n') as conn:
+            self.assertTrue(cc.is_windows_ssh('winbox'))
+        conn.assert_called_once_with(('winbox', 22), 5)
+        with fake_conn(b'SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\r\n'):
+            self.assertFalse(cc.is_windows_ssh('linbox'))
+        with mock.patch.object(cc.socket_mod, 'create_connection',
+                               side_effect=OSError('refused')):
+            self.assertFalse(cc.is_windows_ssh('nobox'))
+
+    def test_cc_no_lxc_suggests_setup(self):
+        """Test cc reports missing lxc and points at 'um setup cc'"""
+        args = cmdline.parse_args(['cc', 'mybox'])
+        with mock.patch('uman_pkg.cc.shutil.which', return_value=None):
+            with terminal.capture() as (out, err):
+                rc = cc.run(args)
+        self.assertEqual(1, rc)
+        self.assertIn('lxc not found', err.getvalue())
+        self.assertIn('um setup cc', out.getvalue())
 
     def test_cc_parsing_base(self):
         """Test cc -b flag"""
@@ -4982,10 +5094,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
     def test_mount_only(self):
         """Test -m without -s just adds the mount and exits"""
         args = cmdline.parse_args(['cc', '-m', '/opt/data', 'mybox'])
-        with mock.patch.object(cc, 'container_exists', return_value=True):
-            with mock.patch.object(cc, 'add_mount') as mock_add:
-                with terminal.capture() as (out, err):
-                    ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'add_mount') as mock_add:
+                    with terminal.capture() as (out, err):
+                        ret = cc.run(args)
         self.assertEqual(0, ret)
         mock_add.assert_called_once_with(
             'mybox', 'data', '/opt/data', '/opt/data', False)
@@ -4994,11 +5107,12 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
     def test_mount_only_no_container(self):
         """Test -m fails if the container does not exist"""
         args = cmdline.parse_args(['cc', '-m', '/opt/data', 'mybox'])
-        with mock.patch.object(cc, 'container_exists', return_value=False):
-            with terminal.capture() as (out, err):
-                ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=False):
+                with terminal.capture() as (out, err):
+                    ret = cc.run(args)
         self.assertEqual(1, ret)
-        self.assertIn('not found', err.getvalue())
+        self.assertIn('Container not found: mybox', err.getvalue())
 
     def test_unmount(self):
         """Test -u removes a mount device"""
@@ -5013,10 +5127,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         """Test -u fails if the device does not exist"""
         args = cmdline.parse_args(['cc', '-u', 'nosuch', 'mybox'])
         result = command.CommandResult(return_code=1, stdout='', stderr='')
-        with mock.patch.object(cc, 'container_exists', return_value=True):
-            with mock.patch.object(cc, 'has_mount', return_value=False):
-                with terminal.capture() as (out, err):
-                    ret = cc.run(args)
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'has_mount', return_value=False):
+                    with terminal.capture() as (out, err):
+                        ret = cc.run(args)
         self.assertEqual(1, ret)
         self.assertIn('nosuch', err.getvalue())
 
@@ -5395,9 +5510,11 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         orig_exists = cc.container_exists
         orig_status = cc.container_status
         orig_has_mount = cc.has_mount
+        orig_which = cc.shutil.which
         cc.container_exists = lambda name: True
         cc.container_status = lambda name: 'RUNNING'
         cc.has_mount = lambda name, mname: True
+        cc.shutil.which = lambda name: '/bin/lxc'
         cc.exec_cmd = fake_exec
         try:
             with terminal.capture() as (out, _):
@@ -5413,6 +5530,7 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
             cc.container_exists = orig_exists
             cc.container_status = orig_status
             cc.has_mount = orig_has_mount
+            cc.shutil.which = orig_which
             cc.exec_cmd = orig_exec
             os.path.expanduser = orig_expanduser
 
@@ -5814,8 +5932,81 @@ More text
         self.assertEqual(1, res)
         self.assertIn('Cannot find U-Boot', err.getvalue())
 
+    def test_setup_cc_already_installed(self):
+        """Test setup_cc when LXD is already installed"""
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which',
+                        return_value='/snap/bin/lxc'):
+            with terminal.capture() as (out, err):
+                res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        self.assertEqual('LXD already installed\n'
+                         'Use --force to re-run initialisation\n',
+                         out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_dry_run(self):
+        """Test setup_cc in dry-run mode shows the install steps"""
+        args = cmdline.parse_args(['-n', 'setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with terminal.capture() as (out, err):
+                    res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        output = out.getvalue()
+        self.assertIn('Would run: sudo snap install lxd', output)
+        self.assertIn('Would run: lxd init --minimal', output)
+        self.assertIn('Would run: sudo usermod -aG lxd simon', output)
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_installs(self):
+        """Test setup_cc runs the install steps when LXD is missing"""
+        calls = []
+
+        def mock_run_pipe(pipe_list, **kwargs):  # pylint: disable=unused-argument
+            calls.append(pipe_list[0])
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with mock.patch('uman_pkg.setup.command.run_pipe',
+                                side_effect=mock_run_pipe):
+                    with terminal.capture() as (out, err):
+                        res = setup.setup_cc(args)
+        self.assertEqual(0, res)
+        self.assertEqual(
+            [['sudo', 'snap', 'install', 'lxd'],
+             ['lxd', 'init', '--minimal'],
+             ['sudo', 'usermod', '-aG', 'lxd', 'simon']],
+            calls)
+        self.assertIn('LXD installed', out.getvalue())
+        self.assertIn("Log out and back in", out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_setup_cc_install_fails(self):
+        """Test setup_cc reports failure when a step fails"""
+        def mock_run_pipe(pipe_list, **kwargs):  # pylint: disable=unused-argument
+            return command.CommandResult(return_code=1, stdout='', stderr='')
+
+        args = cmdline.parse_args(['setup', 'cc'])
+        with mock.patch('uman_pkg.setup.shutil.which', return_value=None):
+            with mock.patch('uman_pkg.setup.getpass.getuser',
+                            return_value='simon'):
+                with mock.patch('uman_pkg.setup.command.run_pipe',
+                                side_effect=mock_run_pipe):
+                    with terminal.capture() as (out, err):
+                        res = setup.setup_cc(args)
+        self.assertEqual(1, res)
+        self.assertIn('Installing LXD failed', err.getvalue())
+        self.assertIn('Try running manually: sudo snap install lxd',
+                      out.getvalue())
+
     def test_setup_components_dict(self):
         """Test that SETUP_COMPONENTS has expected entries"""
+        self.assertIn('cc', setup.SETUP_COMPONENTS)
         self.assertIn('gcc', setup.SETUP_COMPONENTS)
         self.assertIn('qemu', setup.SETUP_COMPONENTS)
         self.assertIn('opensbi', setup.SETUP_COMPONENTS)
