@@ -4399,6 +4399,42 @@ class TestUmanMergeRequest(TestBase):
         self.assertEqual('New Description', mock_mr.description)
         mock_mr.save.assert_called_once()
 
+        # The MR exists, so the push starts the MR pipeline itself
+        self.assertFalse(_mock_push.call_args.kwargs.get('skip_ci'))
+
+    @mock.patch('pickman.gitlab_api', create=True)
+    @mock.patch('gitlab.Gitlab')
+    @mock.patch('uman_pkg.control.extract_mr_info')
+    @mock.patch('u_boot_pylib.gitutil.get_branch')
+    @mock.patch('uman_pkg.control.git_push_branch')
+    def test_merge_request_new_skips_branch_pipeline(
+            self, mock_push, mock_get_branch, mock_extract, mock_gitlab_cls,
+            mock_api):
+        """Test that creating an MR pushes without a branch pipeline"""
+        mock_get_branch.return_value = 'test-branch'
+        mock_extract.return_value = ('Title', 'Description', '')
+        mock_api.get_remote_url.return_value = \
+            'https://gitlab.com/user/repo.git'
+        mock_api.parse_url.return_value = ('gitlab.com', 'user/repo')
+        mock_api.get_token.return_value = 'fake-token'
+        mock_api.create_mr.return_value = \
+            'https://gitlab.com/user/repo/-/merge_requests/2'
+
+        # No MR exists yet
+        mock_project = mock.MagicMock()
+        mock_project.mergerequests.list.return_value = []
+        mock_gitlab_cls.return_value.projects.get.return_value = mock_project
+
+        args = make_args(merge=True)
+        with terminal.capture():
+            result = control.do_merge_request(args)
+
+        self.assertEqual(0, result)
+        mock_api.create_mr.assert_called_once()
+
+        # Creating the MR starts its pipeline, so the push must not
+        self.assertTrue(mock_push.call_args.kwargs.get('skip_ci'))
+
 
 def make_pipe(pipe_id, status='running'):
     """Create a stand-in for a GitLab pipeline object
