@@ -8,6 +8,7 @@ This module handles the 'claude-code' subcommand which creates and manages LXC
 containers for running Claude Code.
 """
 
+import base64
 import getpass
 import os
 import random
@@ -801,13 +802,111 @@ def launch_claude(name, cont=False, dry_run=False, log_file=None):
     exec_cmd(cmd, dry_run, capture=False, log_file=log_file)
 
 
+def is_windows_ssh(host, timeout=5):
+    """Check whether a host runs the Windows OpenSSH server
+
+    Reads the SSH identification banner, which needs no login, so the
+    user is not prompted for a password an extra time
+
+    Args:
+        host (str): Host name or IP address
+        timeout (int): Connection timeout in seconds
+
+    Returns:
+        bool: True if the server identifies as OpenSSH for Windows
+    """
+    try:
+        with socket_mod.create_connection((host, 22), timeout) as sock:
+            banner = sock.recv(256).decode('utf-8', 'replace')
+    except OSError:
+        return False
+    return 'Windows' in banner
+
+
+def windows_key_cmd(key):
+    """Build a remote command to authorise a public key on Windows
+
+    Windows OpenSSH ignores ~/.ssh/authorized_keys for members of the
+    Administrators group, using a shared administrators_authorized_keys
+    file instead, which sshd only accepts if just SYSTEM and
+    Administrators can access it. The script is passed to PowerShell
+    as an encoded command so it works whether the default shell is
+    cmd or PowerShell, without any quoting problems.
+
+    Args:
+        key (str): Public key line
+
+    Returns:
+        list of str: Remote command and arguments
+    """
+    key = key.strip().replace("'", "''")
+    script = f"""$ProgressPreference = 'SilentlyContinue'
+$k = '{key}'
+$admin = whoami /groups | Select-String -SimpleMatch 'S-1-5-32-544'
+if ($admin) {{
+    $f = "$env:ProgramData\\ssh\\administrators_authorized_keys"
+}} else {{
+    $d = "$env:USERPROFILE\\.ssh"
+    New-Item -ItemType Directory -Force -Path $d | Out-Null
+    $f = "$d\\authorized_keys"
+}}
+$old = ''
+if (Test-Path $f) {{ $old = [IO.File]::ReadAllText($f) }}
+if (-not $old.Contains($k)) {{
+    if ($old -and -not $old.EndsWith("`n")) {{ $k = "`r`n$k" }}
+    [IO.File]::AppendAllText($f, "$k`r`n")
+}}
+if ($admin) {{
+    icacls $f /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' |
+        Out-Null
+}}
+Write-Output "Key is in $f"
+"""
+    enc = base64.b64encode(script.encode('utf-16-le')).decode()
+    return ['powershell', '-NoProfile', '-NonInteractive',
+            '-EncodedCommand', enc]
+
+
+def copy_key(name, target, windows, dry_run=False):
+    """Authorise the container's public key on a remote host
+
+    Args:
+        name (str): Container name
+        target (str): Remote target as USER@HOST
+        windows (bool): True if the remote host runs Windows
+        dry_run (bool): If True, just show commands
+
+    Returns:
+        int: 0 on success, 1 on failure
+    """
+    tout.notice(f'Copying public key to {target} (password may be required)')
+    pub = f'{UBUNTU_HOME}/.ssh/id_ed25519.pub'
+    cmd = ['lxc', 'exec', name, '--', 'sudo', '-iu', 'ubuntu']
+    if windows:
+        result = lxc_exec(name, f'cat {pub}', dry_run=False)
+        if not result or result.return_code:
+            tout.error(f'Failed to read {pub} in {name}')
+            return 1
+        cmd += ['ssh', '-o', 'StrictHostKeyChecking=accept-new',
+                target] + windows_key_cmd(result.stdout)
+    else:
+        cmd += ['ssh-copy-id', '-i', pub,
+                '-o', 'StrictHostKeyChecking=accept-new', target]
+    result = exec_cmd(cmd, dry_run, capture=False)
+    if not dry_run and result and result.return_code:
+        tout.error(f'Copying the key to {target} failed')
+        return 1
+    return 0
+
+
 def setup_ssh_access(name, target, dry_run=False):
     """Set up SSH key access from the container to a remote host
 
     Generates an ed25519 keypair inside the container if one is not
-    already there, then runs ssh-copy-id to authorise the public key
-    on the remote host. The remote login is interactive so the user
-    can supply the destination password if needed.
+    already there, then authorises the public key on the remote host,
+    using ssh-copy-id for Unix-like hosts and a PowerShell script for
+    Windows hosts. The remote login is interactive so the user can
+    supply the destination password if needed.
 
     Resolves the host name on the host side and adds an /etc/hosts
     entry to the container, since the container has its own resolver
@@ -826,6 +925,7 @@ def setup_ssh_access(name, target, dry_run=False):
         target = f'{getpass.getuser()}@{target}'
 
     user, _, host = target.partition('@')
+    windows = False
     if not dry_run:
         try:
             ip = socket_mod.gethostbyname(host)
@@ -845,6 +945,7 @@ def setup_ssh_access(name, target, dry_run=False):
             if result and result.return_code:
                 tout.error(f"Failed to update /etc/hosts in {name}")
                 return 1
+        windows = is_windows_ssh(ip)
 
     keygen = (
         f'mkdir -p {UBUNTU_HOME}/.ssh && chmod 700 {UBUNTU_HOME}/.ssh && '
@@ -870,15 +971,7 @@ def setup_ssh_access(name, target, dry_run=False):
         tout.error(f'Failed to update {config} in {name}')
         return 1
 
-    tout.notice(f'Copying public key to {target} (password may be required)')
-    copy_cmd = ['lxc', 'exec', name, '--', 'sudo', '-iu', 'ubuntu',
-                'ssh-copy-id',
-                '-i', f'{UBUNTU_HOME}/.ssh/id_ed25519.pub',
-                '-o', 'StrictHostKeyChecking=accept-new',
-                target]
-    result = exec_cmd(copy_cmd, dry_run, capture=False)
-    if not dry_run and result and result.return_code:
-        tout.error(f'ssh-copy-id to {target} failed')
+    if copy_key(name, target, windows, dry_run):
         return 1
     tout.notice(f"SSH access from '{name}' to {target} is set up")
     return 0

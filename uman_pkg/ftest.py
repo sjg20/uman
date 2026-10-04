@@ -8,6 +8,7 @@
 
 import argparse
 import ast
+import base64
 import os
 import shutil
 import subprocess
@@ -4759,8 +4760,10 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
                                        return_value='simon'):
                     with mock.patch.object(cc.socket_mod, 'gethostbyname',
                                            return_value='10.0.0.5'):
-                        with terminal.capture():
-                            rc = cc.setup_ssh_access('mybox', 'host.lan')
+                        with mock.patch.object(cc, 'is_windows_ssh',
+                                               return_value=False):
+                            with terminal.capture():
+                                rc = cc.setup_ssh_access('mybox', 'host.lan')
         self.assertEqual(0, rc)
         # The ssh-copy-id call should target simon@host.lan
         copy_call = next(c for c in calls if c[0] == 'exec_cmd')
@@ -4776,6 +4779,69 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(1, len(config_calls))
         self.assertIn('Host host.lan', config_calls[0][2])
         self.assertIn('User simon', config_calls[0][2])
+
+    def test_setup_ssh_access_windows(self):
+        """Test setup_ssh_access uses PowerShell for a Windows host"""
+        calls = []
+        key = 'ssh-ed25519 AAAAkey ubuntu@mybox'
+
+        def fake_lxc_exec(name, cmd, dry_run=False, user=None):  # pylint: disable=unused-argument
+            calls.append(('lxc_exec', name, cmd, user))
+            stdout = f'{key}\n' if cmd.startswith('cat ') else ''
+            return command.CommandResult(return_code=0, stdout=stdout,
+                                         stderr='')
+
+        def fake_exec_cmd(cmd, dry_run, capture=False):  # pylint: disable=unused-argument
+            calls.append(('exec_cmd', cmd))
+            return command.CommandResult(return_code=0, stdout='', stderr='')
+
+        with mock.patch.object(cc, 'lxc_exec', side_effect=fake_lxc_exec):
+            with mock.patch.object(cc, 'exec_cmd', side_effect=fake_exec_cmd):
+                with mock.patch.object(cc.socket_mod, 'gethostbyname',
+                                       return_value='10.0.0.5'):
+                    with mock.patch.object(cc, 'is_windows_ssh',
+                                           return_value=True):
+                        with terminal.capture():
+                            rc = cc.setup_ssh_access('mybox', 'bob@winbox')
+        self.assertEqual(0, rc)
+        copy_cmd = next(c for c in calls if c[0] == 'exec_cmd')[1]
+        self.assertEqual(
+            ['lxc', 'exec', 'mybox', '--', 'sudo', '-iu', 'ubuntu', 'ssh',
+             '-o', 'StrictHostKeyChecking=accept-new', 'bob@winbox'] +
+            cc.windows_key_cmd(key), copy_cmd)
+        self.assertNotIn('ssh-copy-id', copy_cmd)
+
+    def test_windows_key_cmd(self):
+        """Test windows_key_cmd encodes a script for the right key file"""
+        cmd = cc.windows_key_cmd("ssh-ed25519 AAAAkey it's\n")
+        self.assertEqual(['powershell', '-NoProfile', '-NonInteractive',
+                          '-EncodedCommand'], cmd[:4])
+        script = base64.b64decode(cmd[4]).decode('utf-16-le')
+        self.assertIn("$k = 'ssh-ed25519 AAAAkey it''s'\n", script)
+        self.assertIn('S-1-5-32-544', script)
+        self.assertIn(
+            r'$f = "$env:ProgramData\ssh\administrators_authorized_keys"',
+            script)
+        self.assertIn(r'$f = "$d\authorized_keys"', script)
+        self.assertIn("/inheritance:r /grant '*S-1-5-32-544:F' "
+                      "/grant '*S-1-5-18:F'", script)
+
+    def test_is_windows_ssh(self):
+        """Test is_windows_ssh checks the server banner"""
+        def fake_conn(banner):
+            sock = mock.MagicMock()
+            sock.__enter__.return_value.recv.return_value = banner
+            return mock.patch.object(cc.socket_mod, 'create_connection',
+                                     return_value=sock)
+
+        with fake_conn(b'SSH-2.0-OpenSSH_for_Windows_9.5\r\n') as conn:
+            self.assertTrue(cc.is_windows_ssh('winbox'))
+        conn.assert_called_once_with(('winbox', 22), 5)
+        with fake_conn(b'SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\r\n'):
+            self.assertFalse(cc.is_windows_ssh('linbox'))
+        with mock.patch.object(cc.socket_mod, 'create_connection',
+                               side_effect=OSError('refused')):
+            self.assertFalse(cc.is_windows_ssh('nobox'))
 
     def test_cc_no_lxc_suggests_setup(self):
         """Test cc reports missing lxc and points at 'um setup cc'"""

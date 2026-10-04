@@ -427,7 +427,13 @@ This:
    own resolver and may not see local hostnames) and adds an entry to
    ``/etc/hosts`` inside the container so ``ssh kea`` works.
 3. Runs ``ssh-copy-id`` from inside the container, prompting once for
-   the destination password to push the public key.
+   the destination password to push the public key. If the server
+   identifies as OpenSSH for Windows, it runs a PowerShell script over
+   ssh instead. For members of the Administrators group this adds the
+   key to ``%ProgramData%\ssh\administrators_authorized_keys`` (since
+   Windows OpenSSH ignores the user's own file for them) and restricts
+   that file to SYSTEM and Administrators, as sshd requires. Other users
+   get ``%USERPROFILE%\.ssh\authorized_keys``.
 4. Adds a ``Host`` / ``User`` block to ``~/.ssh/config`` inside the
    container so ``ssh kea`` uses the right login name automatically.
 
