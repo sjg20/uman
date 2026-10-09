@@ -4436,6 +4436,43 @@ class TestUmanMergeRequest(TestBase):
         self.assertTrue(mock_push.call_args.kwargs.get('skip_ci'))
 
 
+class TestUmanMrCount(TestBase):
+    """Tests for counting the commits in a merge request"""
+
+    @mock.patch('u_boot_pylib.gitutil.count_commits_to_branch')
+    @mock.patch('uman_pkg.control.command.run_one')
+    @mock.patch('uman_pkg.control.get_ci_remote')
+    def test_count_against_target(self, mock_remote, mock_run, mock_count):
+        """Test that commits are counted from the fetched MR target"""
+        mock_remote.return_value = 'ci'
+        mock_run.return_value = command.CommandResult(return_code=0)
+        mock_count.return_value = 1
+
+        args = make_args(merge=True)
+        self.assertEqual(1, control.count_mr_commits('deb-binman', args))
+
+        # The target is fetched, then used instead of the tracking ref
+        self.assertEqual(('git', 'fetch', '-q', 'ci', 'master'),
+                         mock_run.call_args.args)
+        mock_count.assert_called_once_with('deb-binman', end='ci/master')
+
+    @mock.patch('u_boot_pylib.gitutil.count_commits_to_branch')
+    @mock.patch('uman_pkg.control.command.run_one')
+    @mock.patch('uman_pkg.control.get_ci_remote')
+    def test_count_fetch_fails(self, mock_remote, mock_run, mock_count):
+        """Test that a failed fetch still counts, from the local copy"""
+        mock_remote.return_value = 'ci'
+        mock_run.return_value = command.CommandResult(
+            return_code=1, stderr='no route to host')
+        mock_count.return_value = 3
+
+        args = make_args(merge=True)
+        with terminal.capture() as (_, err):
+            self.assertEqual(3, control.count_mr_commits('feat', args))
+        self.assertIn('Could not fetch ci/master', err.getvalue())
+        mock_count.assert_called_once_with('feat', end='ci/master')
+
+
 def make_pipe(pipe_id, status='running'):
     """Create a stand-in for a GitLab pipeline object
 
