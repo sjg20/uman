@@ -28,7 +28,7 @@ ACTIVE_STATUS = ('created', 'waiting_for_resource', 'preparing', 'pending',
 # Heavy imports are done lazily in the functions that need them:
 # - gitlab: do_merge_request()
 # - patman.patchstream: extract_mr_info()
-# - u_boot_pylib.gitutil: extract_mr_info(), do_merge_request(), do_ci()
+# - u_boot_pylib.gitutil: count_mr_commits(), do_merge_request(), do_ci()
 # - uman_pkg.gitlab_parser: validate_ci_args()
 # - uman_pkg.cc: run_command() for 'claude-code'
 # - uman_pkg.build: run_command() for 'build'
@@ -555,6 +555,42 @@ def run_command(args):  # pylint: disable=R0911
     return 1
 
 
+# Branch which merge requests are created against
+MR_TARGET = 'master'
+
+
+def count_mr_commits(branch, args):
+    """Count the commits a merge request for a branch will contain
+
+    The merge request shows the commits between its target branch on the
+    CI remote and the branch, so count those rather than the commits since
+    the branch's tracking ref. The two differ when the tracking ref is out
+    of date, or points somewhere else: a branch started after a series was
+    merged then appears to include that series, and its cover letter ends up
+    on the merge request. The target is fetched first, so the count matches
+    what GitLab shows.
+
+    Args:
+        branch (str): Branch name
+        args (argparse.Namespace): Arguments from cmdline
+
+    Returns:
+        int: Number of commits
+    """
+    # pylint: disable=import-outside-toplevel
+    from u_boot_pylib import gitutil
+
+    remote = get_ci_remote(args)
+    target = f'{remote}/{MR_TARGET}'
+    result = command.run_one('git', 'fetch', '-q', remote, MR_TARGET,
+                             capture=True, capture_stderr=True,
+                             raise_on_error=False)
+    if result.return_code:
+        tout.warning(f'Could not fetch {target}, so counting from the local '
+                     f'copy: {result.stderr.strip()}')
+    return gitutil.count_commits_to_branch(branch, end=target)
+
+
 def extract_mr_info(branch, args):
     """Extract title and description for merge request from patch series
 
@@ -568,13 +604,12 @@ def extract_mr_info(branch, args):
     """
     # pylint: disable=import-outside-toplevel
     from patman import patchstream
-    from u_boot_pylib import gitutil
 
     start = 0
     end = 0
 
-    # Work out how many patches to send if we can
-    count = gitutil.count_commits_to_branch(branch) - start
+    # Work out how many patches the merge request will contain
+    count = count_mr_commits(branch, args) - start
     series = patchstream.get_metadata(branch, start, count - end)
 
     # For single commit, use commit subject/body; for multiple commits,
@@ -915,7 +950,7 @@ def do_merge_request(args):  # pylint: disable=too-many-locals
     else:
         # Create new MR
         tout.info('Creating merge request...')
-        mr_url = gitlab_api.create_mr(host, proj, branch, 'master',
+        mr_url = gitlab_api.create_mr(host, proj, branch, MR_TARGET,
                                       title, desc)
         if not mr_url:
             tout.error('Failed to create merge request')
