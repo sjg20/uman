@@ -591,6 +591,27 @@ def count_mr_commits(branch, args):
     return gitutil.count_commits_to_branch(branch, end=target)
 
 
+def commit_body(commit):
+    """Get the body of a commit message, without its subject
+
+    patchstream stores the whole message, subject included, in commit.msg,
+    so drop the subject and the blank lines after it. Otherwise the
+    description of a merge request repeats its title as its first line.
+
+    Args:
+        commit (Commit): patman commit
+
+    Returns:
+        list of str: Lines of the body, which may be empty
+    """
+    lines = commit.msg.splitlines() if commit.msg else []
+    if lines and lines[0].strip() == commit.subject.strip():
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    return lines
+
+
 def extract_mr_info(branch, args):
     """Extract title and description for merge request from patch series
 
@@ -619,7 +640,7 @@ def extract_mr_info(branch, args):
         # description
         commit = series.commits[0]
         title = commit.subject
-        desc = commit.msg.splitlines() if commit.msg else []
+        desc = commit_body(commit)
         tout.info('Using single commit subject and body for merge request')
     else:
         # Multiple commits - require cover letter
