@@ -4436,6 +4436,31 @@ class TestUmanMergeRequest(TestBase):
         self.assertTrue(mock_push.call_args.kwargs.get('skip_ci'))
 
 
+class TestUmanCommitBody(TestBase):
+    """Tests for taking an MR description from a single commit"""
+
+    def test_drops_subject(self):
+        """Test that the subject is not repeated in the description"""
+        commit = SimpleNamespace(
+            subject='cmd: Fix it',
+            msg='cmd: Fix it\n\nThe problem.\n\nThe fix.\n')
+        self.assertEqual(['The problem.', '', 'The fix.'],
+                         control.commit_body(commit))
+
+    def test_body_only(self):
+        """Test a message which holds only the body already"""
+        commit = SimpleNamespace(subject='cmd: Fix it',
+                                 msg='The problem.\n')
+        self.assertEqual(['The problem.'], control.commit_body(commit))
+
+    def test_no_body(self):
+        """Test a commit with a subject and nothing else"""
+        commit = SimpleNamespace(subject='cmd: Fix it', msg='cmd: Fix it\n')
+        self.assertEqual([], control.commit_body(commit))
+        self.assertEqual([], control.commit_body(
+            SimpleNamespace(subject='cmd: Fix it', msg=None)))
+
+
 class TestUmanMrCount(TestBase):
     """Tests for counting the commits in a merge request"""
 
