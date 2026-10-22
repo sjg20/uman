@@ -5176,6 +5176,115 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(1, ret)
         self.assertIn('Container not found: mybox', err.getvalue())
 
+    def test_cc_parsing_dir(self):
+        """Test cc -D/--dir parsing"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', '/new/path'])
+        self.assertEqual('/new/path', args.dir)
+
+        args = cmdline.parse_args(['cc', 'mybox', '--dir', '/new/path'])
+        self.assertEqual('/new/path', args.dir)
+
+        args = cmdline.parse_args(['cc'])
+        self.assertIsNone(args.dir)
+
+    def test_set_project(self):
+        """Test -D updates the datadir source"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', self.test_dir])
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'has_mount', return_value=True):
+                    with mock.patch.object(cc, 'unmark_skipped'):
+                        with mock.patch.object(
+                                cc, 'container_status',
+                                return_value='STOPPED'):
+                            with mock.patch.object(cc, 'lxc') as mock_lxc:
+                                mock_lxc.return_value = command.CommandResult(
+                                    return_code=0)
+                                with terminal.capture() as (out, err):
+                                    ret = cc.run(args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        mock_lxc.assert_called_once_with(
+            'config', 'device', 'set', 'mybox', 'datadir',
+            f'source={self.test_dir}', dry_run=False)
+        self.assertEqual(
+            f'Project directory for mybox is now {self.test_dir}\n',
+            out.getvalue())
+
+    def test_set_project_running(self):
+        """Test -D says to restart a running container"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', self.test_dir])
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'has_mount', return_value=True):
+                    with mock.patch.object(cc, 'unmark_skipped'):
+                        with mock.patch.object(
+                                cc, 'container_status',
+                                return_value='RUNNING'):
+                            with mock.patch.object(cc, 'lxc') as mock_lxc:
+                                mock_lxc.return_value = command.CommandResult(
+                                    return_code=0)
+                                with terminal.capture() as (out, err):
+                                    ret = cc.run(args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        self.assertIn('Restart to use it: uman cc -R mybox', out.getvalue())
+
+    def test_set_project_adds_missing_device(self):
+        """Test -D adds datadir back when it was unmounted"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', self.test_dir])
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with mock.patch.object(cc, 'has_mount', return_value=False):
+                    with mock.patch.object(cc, 'unmark_skipped') as mock_un:
+                        with mock.patch.object(
+                                cc, 'container_status',
+                                return_value='STOPPED'):
+                            with mock.patch.object(
+                                    cc, 'add_mount',
+                                    return_value=True) as mock_add:
+                                with terminal.capture() as (out, err):
+                                    ret = cc.run(args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        # The skip list must be cleared, or the mount would be left out
+        mock_un.assert_called_once_with('mybox', 'datadir')
+        mock_add.assert_called_once_with(
+            'mybox', 'datadir', self.test_dir, cc.PROJECT_DEST, False)
+
+    def test_set_project_bad_dir(self):
+        """Test -D rejects a path which is not a directory"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', '/no/such/dir'])
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=True):
+                with terminal.capture() as (out, err):
+                    ret = cc.run(args)
+        self.assertEqual(1, ret)
+        self.assertFalse(out.getvalue())
+        self.assertEqual('Not a directory: /no/such/dir\n', err.getvalue())
+
+    def test_set_project_no_container(self):
+        """Test -D fails if the container does not exist"""
+        args = cmdline.parse_args(['cc', 'mybox', '-D', self.test_dir])
+        with mock.patch.object(cc.shutil, 'which', return_value='/bin/lxc'):
+            with mock.patch.object(cc, 'container_exists', return_value=False):
+                with terminal.capture() as (out, err):
+                    ret = cc.run(args)
+        self.assertEqual(1, ret)
+        self.assertFalse(out.getvalue())
+        self.assertEqual('Container not found: mybox\n', err.getvalue())
+
+    def test_set_project_dry_run(self):
+        """Test -D shows the command in dry-run mode"""
+        args = cmdline.parse_args(['-n', 'cc', 'mybox', '-D', self.test_dir])
+        with terminal.capture() as (out, err):
+            ret = cc.run(args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        self.assertIn(
+            f'lxc config device set mybox datadir source={self.test_dir}',
+            out.getvalue())
+
     def test_unmount(self):
         """Test -u removes a mount device"""
         args = cmdline.parse_args(['-n', 'cc', '-u', 'linux', 'mybox'])
