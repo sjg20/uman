@@ -84,6 +84,8 @@ def add_claude_code_subparser(subparsers):
                     help='Continue the most recent conversation')
     cc.add_argument('-d', '--delete', action='store_true',
                     help='Delete the named container')
+    cc.add_argument('-D', '--dir', metavar='PATH',
+                    help='Change the project directory for the container')
     cc.add_argument('-r', '--rename', metavar='NEW',
                     help='Rename the named container')
     cc.add_argument('-e', '--ephemeral', action='store_true',

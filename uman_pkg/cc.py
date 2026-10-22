@@ -1029,6 +1029,49 @@ def get_project(name):
     return ''
 
 
+def set_project(name, path, dry_run=False):
+    """Change the project directory associated with a container
+
+    Updates the datadir device, which is the host directory mounted at
+    PROJECT_DEST in the container. The container must be restarted before
+    the new directory shows up inside it.
+
+    Args:
+        name (str): Container name
+        path (str): New host directory
+        dry_run (bool): If True, just show the command
+
+    Returns:
+        int: Exit code
+    """
+    src = os.path.realpath(os.path.expanduser(path))
+    if not dry_run and not os.path.isdir(src):
+        tout.error(f'Not a directory: {src}')
+        return 1
+
+    # An earlier --unmount leaves datadir on the skip list, which would stop
+    # it being set up again
+    if not dry_run:
+        unmark_skipped(name, 'datadir')
+
+    if not dry_run and not has_mount(name, 'datadir'):
+        # The device is missing, e.g. it was removed with --unmount
+        if not add_mount(name, 'datadir', src, PROJECT_DEST, dry_run):
+            return 1
+    else:
+        result = lxc('config', 'device', 'set', name, 'datadir',
+                     f'source={src}', dry_run=dry_run)
+        if result is not None and result.return_code:
+            tout.error('Failed to set the project directory: '
+                       f'{(result.stderr or result.stdout).strip()}')
+            return 1
+
+    tout.notice(f'Project directory for {name} is now {src}')
+    if not dry_run and container_status(name) == 'RUNNING':
+        tout.notice(f'Restart to use it: uman cc -R {name}')
+    return 0
+
+
 def list_containers():
     """List uman containers (those with a datadir device)
 
@@ -1270,6 +1313,13 @@ def run(args):  # pylint: disable=too-many-locals,too-many-branches,too-many-sta
             tout.error(f'Container not found: {name}')
             return 1
         return 0 if remove_mount(name, args.unmount, args.dry_run) else 1
+
+    if args.dir:
+        name = args.name or os.path.basename(os.path.realpath(os.getcwd()))
+        if not args.dry_run and not container_exists(name):
+            tout.error(f'Container not found: {name}')
+            return 1
+        return set_project(name, args.dir, args.dry_run)
 
     if args.delete:
         if not args.name:

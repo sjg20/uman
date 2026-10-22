@@ -391,6 +391,9 @@ idempotent setup steps.
 - ``-b, --base IMAGE``: Ubuntu base image (default: noble, or from config)
 - ``-c, --continue``: Continue the most recent conversation
 - ``-d, --delete``: Delete the named container
+- ``-D, --dir PATH``: Change the project directory for the container, i.e. the
+  host directory mounted at ``~/project`` inside it. The container must be
+  restarted (``-R``) for the new directory to show up
 - ``-e, --ephemeral``: Use a random name and delete on exit
 - ``-l, --list``: List existing uman containers with project paths
 - ``-m, --mount PATH``: Mount a host directory (see **Mounts** below)
