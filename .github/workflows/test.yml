@@ -21,7 +21,5 @@ jobs:
       - run: >
           python -m pytest uman_pkg/ftest.py -v -k
           'not TestCcFunctional
-          and not TestGitRebase
-          and not TestUmanControl
-          and not TestUmanMergeRequest'
+          and not TestGitRebase'
       - run: python3 -m pylint -E uman_pkg/ftest.py
