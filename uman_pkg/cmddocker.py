@@ -10,12 +10,11 @@ tests inside the same Docker image used by CI.
 
 import os
 
-import yaml
-
 # pylint: disable=import-error
 from u_boot_pylib import command
 from u_boot_pylib import tout
 
+from uman_pkg import gitlab_parser
 from uman_pkg import util
 
 
@@ -47,7 +46,7 @@ def load_ci_yaml(uboot_dir):
         return None
 
     with open(ci_path, 'r', encoding='utf-8') as inf:
-        return yaml.safe_load(inf)
+        return gitlab_parser.load_yaml(inf)
 
 
 def get_ci_image(data):

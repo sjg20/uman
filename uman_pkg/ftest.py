@@ -4231,6 +4231,37 @@ class TestGitLabParser(TestBase):
         self.assertEqual(parser1.boards, parser2.boards)
         self.assertEqual(parser1.job_names, parser2.job_names)
 
+    def test_reference_tag(self):
+        """Test parsing a CI file which uses GitLab's !reference tag"""
+        ci_file = os.path.join(self.test_dir, '.gitlab-ci.yml')
+        with open(ci_file, 'w', encoding='utf-8') as fout:
+            fout.write('''.only_jobs:
+  rules:
+    - if: $ONLY_JOBS
+      when: never
+
+.lab_template: &lab
+  stage: sjg-lab-slow
+  rules:
+    - !reference [.only_jobs, rules]
+    - when: manual
+
+epyc:
+  <<: *lab
+  variables:
+    ROLE: epyc
+''')
+
+        # The tag is kept as the list of keys it refers to
+        with open(ci_file, encoding='utf-8') as inf:
+            data = gitlab_parser.load_yaml(inf)
+        self.assertEqual([['.only_jobs', 'rules'], {'when': 'manual'}],
+                         data['.lab_template']['rules'])
+
+        parser = gitlab_parser.GitLabCIParser(ci_file)
+        self.assertEqual(['epyc'], parser.roles)
+        self.assertEqual(['epyc'], parser.slow_roles)
+
     def test_find_gitlab_ci_file_cwd(self):
         """Test that find_gitlab_ci_file() checks the current directory"""
         old_cwd = os.getcwd()

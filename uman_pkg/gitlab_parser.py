@@ -18,8 +18,29 @@ try:
 except ImportError:
     YAML_AVAILABLE = False
 
+if YAML_AVAILABLE:
+    class CILoader(yaml.SafeLoader):  # pylint: disable=too-many-ancestors
+        """SafeLoader which also accepts the tags GitLab adds to YAML"""
+
+    # GitLab's '!reference [job, key]' pulls in part of another job. Keep it
+    # as the list of keys it names, since uman has no need to resolve it
+    CILoader.add_constructor(
+        '!reference', lambda loader, node: loader.construct_sequence(node))
+
 # Stage used by the slow lab jobs, which are gated on SJG_LAB_SLOW
 SLOW_STAGE = 'sjg-lab-slow'
+
+
+def load_yaml(stream):
+    """Parse a GitLab CI file, allowing GitLab's own tags such as !reference
+
+    Args:
+        stream (str or file): YAML text, or an open file to read it from
+
+    Returns:
+        The parsed data, e.g. a dict for a CI file
+    """
+    return yaml.load(stream, Loader=CILoader)
 
 
 def find_gitlab_ci_file():
@@ -109,7 +130,7 @@ class GitLabCIParser:
 
         # Try YAML parsing first if available
         if YAML_AVAILABLE:
-            data = yaml.safe_load(content)
+            data = load_yaml(content)
             if not isinstance(data, dict):
                 return
 
@@ -161,7 +182,7 @@ class GitLabCIParser:
             content = f.read()
 
         if YAML_AVAILABLE:
-            data = yaml.safe_load(content)
+            data = load_yaml(content)
             if not isinstance(data, dict):
                 return
             # Job names are top-level dict entries that have a variables
