@@ -5536,6 +5536,16 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
 
+    def test_editor_proxy_long_path(self):
+        """Test editor proxy gives up on a path too long for a socket"""
+        # A Unix socket path is limited to about 108 bytes
+        project_src = os.path.join(self.test_dir, 'x' * 120)
+        os.makedirs(project_src)
+        with terminal.capture() as (_, err):
+            sock_path = cc.start_editor_proxy(project_src)
+        self.assertIn('Cannot start the editor proxy', err.getvalue())
+        self.assertFalse(os.path.exists(sock_path))
+
     def test_run_command_cc(self):
         """Test run_command dispatches to cc correctly"""
         args = cmdline.parse_args(['-n', 'cc', 'test-cc'])
