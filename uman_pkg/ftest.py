@@ -12,9 +12,10 @@ import base64
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from u_boot_pylib import command
@@ -28,6 +29,45 @@ from uman_pkg import (build, cc, cmdconfig, cmddocker, cmdgit, cmdline, cmdpy,
 
 # Capture stdout and stderr for silent command execution
 CAPTURE = {'capture': True, 'capture_stderr': True}
+
+# A small CI file in the style of U-Boot's, for tests which need one
+FAKE_CI = '''.only_jobs:
+  rules:
+    - if: $ONLY_JOBS
+      when: never
+
+.testpy_template: &testpy
+  rules:
+    - !reference [.only_jobs, rules]
+    - when: always
+
+sandbox test.py:
+  <<: *testpy
+  variables:
+    TEST_PY_BD: "sandbox"
+
+.lab_template: &lab
+  stage: sjg-lab
+
+rpi4:
+  <<: *lab
+  variables:
+    ROLE: rpi4
+
+.lab_slow_template: &lab_slow
+  stage: sjg-lab-slow
+
+epyc:
+  <<: *lab_slow
+  variables:
+    ROLE: epyc
+'''
+
+# The sage-lab include which goes with FAKE_CI
+FAKE_SAGE_CI = '''opi_pc:
+  variables:
+    BOARD: orangepi_pc
+'''
 
 
 class TestBase(unittest.TestCase):
@@ -62,6 +102,24 @@ class TestBase(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures"""
         self.test_dir = tempfile.mkdtemp()
+
+    def use_fake_ci(self, dirname):
+        """Write FAKE_CI into a directory, for the parser to find
+
+        Also stop find_gitlab_ci_file() from falling back to ~/u, so that the
+        CI file of a U-Boot tree on this machine cannot be picked up
+
+        Args:
+            dirname (str): Directory to write .gitlab-ci.yml into
+        """
+        tools.write_file(os.path.join(dirname, '.gitlab-ci.yml'), FAKE_CI,
+                         False)
+        tools.write_file(os.path.join(dirname, '.gitlab-ci-sage-lab.yml'),
+                         FAKE_SAGE_CI, False)
+        patcher = mock.patch.object(gitlab_parser.Path, 'home',
+                                    return_value=gitlab_parser.Path(dirname))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         """Clean up and restore command.TEST_RESULT after each test"""
@@ -113,9 +171,43 @@ class GitRepoMixin:
         command.run_one('git', *args, raise_on_error=False, **CAPTURE)
 
 
+def parser_defaults():
+    """Get the default value of every option which uman's parser defines
+
+    This covers all the subcommands, so that a Namespace built from it has
+    every attribute the code may look at, however new the option.
+
+    Returns:
+        dict: Default value for each destination
+    """
+    defaults = {}
+    parsers = [cmdline.setup_parser()]
+    while parsers:
+        parser = parsers.pop()
+        # pylint: disable=protected-access
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                parsers.extend(action.choices.values())
+            elif action.default is not argparse.SUPPRESS:
+                defaults.setdefault(action.dest, action.default)
+    return defaults
+
+
+def fake_pickman(func):
+    """Run a test with an empty pickman package for it to patch
+
+    pickman lives in U-Boot's tools directory, so it can only be imported
+    when a U-Boot tree is present. Use a stand-in so that the test gives the
+    same result either way.
+    """
+    return mock.patch.dict(sys.modules, {'pickman': ModuleType('pickman')})(
+        func)
+
+
 def make_args(**kwargs):
     """Create an argparse.Namespace with default CI arguments"""
-    defaults = {
+    defaults = parser_defaults()
+    defaults.update({
         'adjust_cfg': None,
         'all': False,
         'bisect': None,
@@ -169,7 +261,7 @@ def make_args(**kwargs):
         'no_trace_early': False,
         'verbose': False,
         'world': False,
-    }
+    })
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
@@ -3459,6 +3551,7 @@ class TestUmanControl(TestBase):  # pylint: disable=too-many-public-methods
         os.chdir(self.test_dir)
         os.makedirs('test/py')
         tools.write_file('test/py/test.py', b'# test')
+        self.use_fake_ci(self.test_dir)
 
     def tearDown(self):
         """Clean up test environment"""
@@ -4146,15 +4239,25 @@ qemu_kernel_args="-bios ${U_BOOT_BUILD_DIR}/u-boot"
 class TestGitLabParser(TestBase):
     """Test GitLab CI file parsing functionality"""
 
+    def setUp(self):
+        super().setUp()
+        self.src_dir = os.path.join(self.test_dir, 'usrc')
+        os.makedirs(self.src_dir)
+        self.use_fake_ci(self.src_dir)
+        patcher = mock.patch.dict(os.environ, {'USRC': self.src_dir})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_gitlab_ci_parser_class(self):
         """Test GitLabCIParser class functionality"""
         # Test direct class usage
         parser = gitlab_parser.GitLabCIParser()
 
-        # Should have properties with lists
-        self.assertIsInstance(parser.roles, list)
-        self.assertIsInstance(parser.boards, list)
-        self.assertIsInstance(parser.job_names, list)
+        self.assertEqual(['epyc', 'rpi4'], parser.roles)
+        self.assertEqual(['sandbox'], parser.boards)
+        self.assertEqual(['sandbox test.py'], parser.job_names)
+        self.assertEqual(['opi_pc'], parser.sage_names)
+        self.assertEqual(['epyc'], parser.slow_roles)
 
     def test_validate_sjg_value(self):
         """Test SJG value validation with class"""
@@ -4163,13 +4266,8 @@ class TestGitLabParser(TestBase):
         # Test special case - should always be valid
         self.assertTrue(control.validate_sjg_value('1', parser))
 
-        # Test with real parser data
-        if parser.roles:
-            valid_role = parser.roles[0]
-            self.assertIn(valid_role, parser.roles)
-
-        # Invalid value should not be in roles
-        self.assertNotIn('definitely_invalid_role_12345', parser.roles)
+        self.assertTrue(control.validate_sjg_value('rpi4', parser))
+        self.assertFalse(control.validate_sjg_value('invalid_role', parser))
 
     def test_validate_sage_value(self):
         """Test SAGE value validation with class"""
@@ -4180,15 +4278,8 @@ class TestGitLabParser(TestBase):
         self.assertTrue(control.validate_sage_value('', parser))
         self.assertTrue(control.validate_sage_value('help', parser))
 
-        # Real sage job (if any) is valid
-        if parser.sage_names:
-            self.assertTrue(
-                control.validate_sage_value(parser.sage_names[0], parser))
-
-        # Bogus job name is not valid
-        self.assertFalse(
-            control.validate_sage_value(
-                'definitely_invalid_sage_job_xyz', parser))
+        self.assertTrue(control.validate_sage_value('opi_pc', parser))
+        self.assertFalse(control.validate_sage_value('invalid_job', parser))
 
     def test_validate_pytest_value(self):
         """Test pytest value validation with class"""
@@ -4197,28 +4288,19 @@ class TestGitLabParser(TestBase):
         # Test special case - should always be valid
         self.assertTrue(control.validate_pytest_value('1', parser))
 
-        # Test with real parser data
-        if parser.boards:
-            valid_board = parser.boards[0]
-            self.assertIn(valid_board, parser.boards)
-
-        # Invalid value should not be in boards
-        self.assertNotIn('definitely_invalid_board_12345', parser.boards)
+        # Either a board or a job name is accepted
+        self.assertTrue(control.validate_pytest_value('sandbox', parser))
+        self.assertTrue(
+            control.validate_pytest_value('sandbox test.py', parser))
+        self.assertFalse(control.validate_pytest_value('invalid_board',
+                                                       parser))
 
     def test_job_names_extraction(self):
         """Test that job names are correctly extracted"""
         parser = gitlab_parser.GitLabCIParser()
 
-        # Should find pytest job names
-        self.assertIsInstance(parser.job_names, list)
-
-        # Should include some known job patterns if GitLab CI file exists
-        job_names_str = ' '.join(parser.job_names)
-        if 'test.py' in job_names_str:
-            # Should have at least one job ending with test.py
-            has_test_py = any(job.endswith('test.py')
-                              for job in parser.job_names)
-            self.assertTrue(has_test_py)
+        # Only jobs whose names end in 'test.py' are pytest jobs
+        self.assertEqual(['sandbox test.py'], parser.job_names)
 
     def test_parser_consistency(self):
         """Test that parser instances return consistent data"""
@@ -4372,6 +4454,7 @@ class TestUmanMergeRequest(TestBase):
         args = parser.parse_args(['ci', '-d', 'develop'])
         self.assertEqual(args.dest, 'develop')
 
+    @fake_pickman
     @mock.patch('pickman.gitlab_api', create=True)
     @mock.patch('gitlab.Gitlab')
     @mock.patch('uman_pkg.control.extract_mr_info')
@@ -4397,6 +4480,7 @@ class TestUmanMergeRequest(TestBase):
 
         self.assertEqual(1, result)
 
+    @fake_pickman
     @mock.patch('pickman.gitlab_api', create=True)
     @mock.patch('gitlab.Gitlab')
     @mock.patch('uman_pkg.control.extract_mr_info')
@@ -4433,6 +4517,7 @@ class TestUmanMergeRequest(TestBase):
         # The MR exists, so the push starts the MR pipeline itself
         self.assertFalse(_mock_push.call_args.kwargs.get('skip_ci'))
 
+    @fake_pickman
     @mock.patch('pickman.gitlab_api', create=True)
     @mock.patch('gitlab.Gitlab')
     @mock.patch('uman_pkg.control.extract_mr_info')
@@ -4839,6 +4924,12 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         tout.init(tout.NOTICE)
         self.config_file = os.path.join(self.test_dir, '.uman')
         settings.SETTINGS['config'] = None
+
+        # cc uses the current directory as the project, so run somewhere
+        # private rather than wherever the tests were started
+        orig_cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, orig_cwd)
 
     def tearDown(self):
         settings.SETTINGS['config'] = None
@@ -5392,7 +5483,7 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
             self.assertIn('test-cc', output)
             self.assertNotIn('--continue', output)
             # /tmp/b mount not present without -o
-            self.assertNotIn('tmpb', output)
+            self.assertNotIn(' tmpb disk', output)
             # uman env written and sourced
             self.assertIn('.uman_env', output)
             self.assertIn('.bashrc', output)
@@ -5535,6 +5626,16 @@ class TestCcSubcommand(TestBase):  # pylint: disable=R0904
         finally:
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
+
+    def test_editor_proxy_long_path(self):
+        """Test editor proxy gives up on a path too long for a socket"""
+        # A Unix socket path is limited to about 108 bytes
+        project_src = os.path.join(self.test_dir, 'x' * 120)
+        os.makedirs(project_src)
+        with terminal.capture() as (_, err):
+            sock_path = cc.start_editor_proxy(project_src)
+        self.assertIn('Cannot start the editor proxy', err.getvalue())
+        self.assertFalse(os.path.exists(sock_path))
 
     def test_run_command_cc(self):
         """Test run_command dispatches to cc correctly"""

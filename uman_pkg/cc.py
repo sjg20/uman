@@ -670,32 +670,23 @@ def setup_uman(name, uboot_tools=None, dry_run=False):
         lxc_exec(name, add_cmd, dry_run=dry_run, user='ubuntu')
 
 
-def editor_listen(sock_path, project_src, host_editor, ready=None):
+def editor_listen(sock, project_src, host_editor):
     """Listen for editor requests from the container
 
-    Runs in a daemon thread. Accepts connections on a Unix socket.
+    Runs in a daemon thread. Accepts connections on a bound Unix socket.
     For project paths, translates to host paths and opens the editor.
     For non-project paths (e.g. /tmp), receives file content as JSON,
     writes a temp file on the host, opens the editor, and sends back
     the edited content.
 
     Args:
-        sock_path (str): Path to the Unix socket file
+        sock (socket.socket): Unix socket, already bound
         project_src (str): Host-side project directory
         host_editor (str): Host editor command
-        ready (threading.Event or None): Set when socket is bound
     """
     import json
     import tempfile
 
-    sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
-    sock.bind(sock_path)
-    # Make socket world-writable so container user can connect
-    os.chmod(sock_path, 0o777)
-    sock.listen(1)
-    sock.settimeout(2)
-    if ready:
-        ready.set()
     while True:
         try:
             conn, _ = sock.accept()
@@ -759,14 +750,25 @@ def start_editor_proxy(project_src, dry_run=False):
     if os.path.exists(sock_path):
         os.unlink(sock_path)
 
+    sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+    try:
+        sock.bind(sock_path)
+    except OSError as exc:
+        # e.g. the path is too long for a Unix socket
+        tout.warning(f'Cannot start the editor proxy at {sock_path}: {exc}')
+        sock.close()
+        return sock_path
+
+    # Make socket world-writable so container user can connect
+    os.chmod(sock_path, 0o777)
+    sock.listen(1)
+    sock.settimeout(2)
+
     host_editor = os.environ.get('EDITOR', 'vi')
-    ready = threading.Event()
     thread = threading.Thread(target=editor_listen,
-                              args=(sock_path, project_src, host_editor,
-                                    ready),
+                              args=(sock, project_src, host_editor),
                               daemon=True)
     thread.start()
-    ready.wait()
     return sock_path
 
 
