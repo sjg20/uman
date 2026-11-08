@@ -280,7 +280,8 @@ def add_build_opts(parser, skip_short=None):
         help='Number of parallel jobs for build (use with -b)')
     group.add_argument(
         '-L', '--lto', action='store_true',
-        help='Enable LTO when building (use with -b)')
+        help="Don't disable LTO when building, so boards whose defconfig "
+        "enables it use it (use with -b)")
     group.add_argument(
         '-o', '--output-dir', metavar='DIR', dest='output_dir',
         help='Override build directory (use with -b)')
@@ -399,7 +400,10 @@ def add_build_subparser(subparsers):
                      help='Build in source tree, not separate directory')
     bld.add_argument('-j', '--jobs', type=int, metavar='JOBS',
                      help='Number of parallel jobs (passed to make)')
-    bld.add_argument('-L', '--lto', action='store_true', help='Enable LTO')
+    bld.add_argument(
+        '-L', '--lto', action='store_true',
+        help="Don't disable LTO, so boards whose defconfig enables it use it; "
+        "add '-a LTO' for other boards")
     bld.add_argument('-o', '--output-dir', metavar='DIR',
                      help='Override output directory')
     bld.add_argument('-O', '--objdump', action='store_true',
