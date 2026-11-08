@@ -790,7 +790,8 @@ hooks to PATH.
 - ``-G, --gdb``: Launch gdb-multiarch and connect to an existing gdbserver
 - ``-j, --jobs JOBS``: Number of parallel jobs (use with -b)
 - ``-l, --list``: List available QEMU and sandbox boards
-- ``-L, --lto``: Enable LTO when building (use with -b)
+- ``-L, --lto``: Don't disable LTO when building, so boards whose defconfig
+  enables it use it (use with -b)
 - ``-P, --persist``: Persist test artifacts (do not clean up after tests)
 - ``-q, --quiet``: Quiet mode - only show build errors, progress, and result
 - ``-s, --show-output``: Show all test output in real-time (pytest -s)
@@ -962,7 +963,8 @@ without going through pytest. This is faster for quick iteration on C code.
 - ``-k, --soft-fail``: Continue each test after a failure, so that all the
   failures are reported, not just the first (sandbox ``--soft_fail``)
 - ``-l, --list``: List available tests
-- ``-L, --lto``: Enable LTO when building (use with -b)
+- ``-L, --lto``: Don't disable LTO when building, so boards whose defconfig
+  enables it use it (use with -b)
 - ``--leak-check``: Check for memory leaks around each test using mallinfo()
 - ``--show-leaks N``: Show top N leaks by bytes (default: 10, 0 to disable)
 - ``--legacy``: Use legacy result parsing (for old U-Boot)
@@ -1022,8 +1024,11 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
     # Build for sandbox
     uman build sandbox
 
-    # Build with LTO enabled
+    # Build with LTO, which sandbox enables in its config
     uman build sandbox -L
+
+    # Build with LTO on a board which does not enable it
+    uman build chromebook_jerry -L -a LTO
 
     # Force reconfiguration
     uman build sandbox -f
@@ -1060,7 +1065,8 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
 - ``--gprof``: Enable gprof profiling (sets GPROF=1)
 - ``-I, --in-tree``: Build in source tree, not separate directory
 - ``-j, --jobs JOBS``: Number of parallel jobs (passed to make)
-- ``-L, --lto``: Enable LTO
+- ``-L, --lto``: Don't disable LTO, so boards whose defconfig enables it use
+  it; add ``-a LTO`` for other boards
 - ``-o, --output-dir DIR``: Override output directory
 - ``-O, --objdump``: Write disassembly of u-boot and SPL ELFs
 - ``-s, --size``: Show size of u-boot and SPL ELFs
