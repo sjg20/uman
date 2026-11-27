@@ -8,6 +8,7 @@ This module handles the 'build' subcommand which builds U-Boot for a
 specified board using buildman.
 """
 
+import glob
 import os
 import shutil
 import sys
@@ -27,6 +28,129 @@ ELF_TARGETS = [
     'tpl/u-boot-tpl',
     'vpl/u-boot-vpl',
 ]
+
+# Emscripten tools passed to make as variables for a WebAssembly build. The
+# SDK's own wasm-ld is needed, since the system one is too old to link U-Boot
+WASM_TOOLS = {
+    'NM': 'llvm-nm',
+    'LD': 'wasm-ld',
+    'OBJCOPY': 'llvm-objcopy',
+    'OBJDUMP': 'llvm-objdump',
+}
+
+# Targets built for WebAssembly, since the 'all' target does not work yet
+WASM_TARGETS = ['u-boot', 'u-boot-web.js', 'dtbs']
+
+# Default location of the Emscripten SDK, if emsdk_dir is not set
+EMSDK_DEFAULT = '~/dev/emsdk'
+
+
+def is_wasm(board):
+    """Check whether a board builds as WebAssembly
+
+    Args:
+        board (str): Board name
+
+    Returns:
+        bool: True if this board needs an Emscripten build
+    """
+    return board.endswith('_wasm')
+
+
+def get_emsdk():
+    """Get the directory holding the Emscripten SDK
+
+    Returns:
+        str: Path to the SDK, from the emsdk_dir setting if it is set
+    """
+    return settings.get('emsdk_dir', EMSDK_DEFAULT)
+
+
+def get_wasm_env(emsdk):
+    """Build the environment needed to run emcc
+
+    This does the same job as sourcing emsdk_env.sh, which needs bash.
+
+    Args:
+        emsdk (str): Path to the Emscripten SDK
+
+    Returns:
+        dict: Environment for the build
+    """
+    env = os.environ.copy()
+    paths = [os.path.join(emsdk, 'upstream', 'emscripten')]
+
+    # The SDK brings its own node, in a directory named after the version
+    paths += sorted(glob.glob(os.path.join(emsdk, 'node', '*', 'bin')))
+    env['EMSDK'] = emsdk
+    env['PATH'] = os.pathsep.join(paths + [env.get('PATH', '')])
+    return env
+
+
+def get_wasm_vars(emsdk):
+    """Get the make variables which select the Emscripten tools
+
+    These are needed for the defconfig step as well as the build, since
+    Kconfig works out that the target is WebAssembly from the compiler.
+
+    Args:
+        emsdk (str): Path to the Emscripten SDK
+
+    Returns:
+        list of str: Variable assignments to pass to make
+    """
+    bindir = os.path.join(emsdk, 'upstream', 'bin')
+    make_vars = ['CC=emcc', 'AR=emar']
+    for var, tool in WASM_TOOLS.items():
+        make_vars.append(f'{var}={os.path.join(bindir, tool)}')
+    return make_vars
+
+
+def build_wasm(board, build_dir, args):
+    """Build U-Boot as WebAssembly, using the Emscripten SDK
+
+    This runs make directly rather than going through buildman, since the
+    compiler and tools must be passed to make for both the defconfig step
+    and the build. See doc/arch/sandbox/wasm.rst in U-Boot.
+
+    Args:
+        board (str): Board name, e.g. sandbox_wasm
+        build_dir (str): Build directory
+        args (argparse.Namespace): Arguments from cmdline
+
+    Returns:
+        int: Exit code
+    """
+    emsdk = get_emsdk()
+    emcc = os.path.join(emsdk, 'upstream', 'emscripten', 'emcc')
+    if not args.dry_run and not os.path.exists(emcc):
+        tout.error(f'Cannot find emcc at {emcc}')
+        tout.notice("Install the Emscripten SDK, or set 'emsdk_dir' in "
+                    '~/.uman')
+        return 1
+
+    if args.lto:
+        tout.warning('LTO is not supported for WebAssembly, ignoring -L')
+
+    env = get_wasm_env(emsdk)
+    base = ['make', '-s', f'O={build_dir}'] + get_wasm_vars(emsdk)
+
+    tout.progress(f'Configuring {board}')
+    result = exec_cmd(base + [f'{board}_defconfig'], args.dry_run, env=env,
+                      capture=False)
+    if result and result.return_code:
+        tout.error('Configuration failed')
+        return result.return_code
+
+    tout.progress(f'Building {board}')
+    cmd = base + [f'-j{args.jobs or os.cpu_count()}'] + WASM_TARGETS
+    result = exec_cmd(cmd, args.dry_run, env=env, capture=False)
+    if result and result.return_code:
+        tout.error('Build failed')
+        return result.return_code
+
+    tout.info('Build complete')
+    return 0
 
 
 def get_execs(build_dir):
@@ -432,6 +556,9 @@ def run(args):
     if args.fresh and os.path.exists(build_dir):
         if not args.dry_run:
             shutil.rmtree(build_dir)
+
+    if is_wasm(board):
+        return build_wasm(board, build_dir, args)
 
     bm_args = get_buildman_args(args, board, build_dir)
 

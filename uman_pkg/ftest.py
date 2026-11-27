@@ -506,6 +506,135 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         args = cmdline.parse_args(['build', 'sandbox', '-L'])
         self.assertNotIn('-L', build.get_cmd(args, 'sandbox', '/tmp/b/sandbox'))
 
+    def test_is_wasm(self):
+        """Test that only _wasm boards are built as WebAssembly"""
+        self.assertTrue(build.is_wasm('sandbox_wasm'))
+        self.assertFalse(build.is_wasm('sandbox'))
+        self.assertFalse(build.is_wasm('wasm_sandbox'))
+
+    def test_get_emsdk(self):
+        """Test the emsdk_dir setting, and its default"""
+        with mock.patch.object(settings, 'get',
+                               return_value='/opt/emsdk') as mock_get:
+            self.assertEqual('/opt/emsdk', build.get_emsdk())
+        mock_get.assert_called_once_with('emsdk_dir', build.EMSDK_DEFAULT)
+
+    def test_get_wasm_vars(self):
+        """Test the make variables which select the Emscripten tools"""
+        self.assertEqual(
+            ['CC=emcc', 'AR=emar',
+             'NM=/sdk/upstream/bin/llvm-nm',
+             'LD=/sdk/upstream/bin/wasm-ld',
+             'OBJCOPY=/sdk/upstream/bin/llvm-objcopy',
+             'OBJDUMP=/sdk/upstream/bin/llvm-objdump'],
+            build.get_wasm_vars('/sdk'))
+
+    def test_get_wasm_env(self):
+        """Test the environment set up for emcc"""
+        with mock.patch.object(build.glob, 'glob',
+                               return_value=['/sdk/node/24.1.0_64bit/bin']):
+            env = build.get_wasm_env('/sdk')
+        self.assertEqual('/sdk', env['EMSDK'])
+        self.assertTrue(env['PATH'].startswith(
+            '/sdk/upstream/emscripten:/sdk/node/24.1.0_64bit/bin:'))
+        # The existing PATH must be kept, after the SDK directories
+        self.assertIn(os.environ['PATH'], env['PATH'])
+
+    def test_build_wasm_commands(self):
+        """Test the defconfig and build commands for WebAssembly"""
+        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm', '-j', '4'])
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (out, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        lines = [line for line in out.getvalue().splitlines()
+                 if 'make' in line]
+        self.assertEqual(2, len(lines))
+        self.assertTrue(lines[0].endswith(
+            'make -s O=/tmp/b/sbw CC=emcc AR=emar '
+            'NM=/sdk/upstream/bin/llvm-nm LD=/sdk/upstream/bin/wasm-ld '
+            'OBJCOPY=/sdk/upstream/bin/llvm-objcopy '
+            'OBJDUMP=/sdk/upstream/bin/llvm-objdump sandbox_wasm_defconfig'))
+        self.assertTrue(lines[1].endswith(
+            'OBJDUMP=/sdk/upstream/bin/llvm-objdump -j4 '
+            'u-boot u-boot-web.js dtbs'))
+
+    def test_build_wasm_jobs_default(self):
+        """Test that the job count defaults to the number of CPUs"""
+        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm'])
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with mock.patch.object(build.os, 'cpu_count',
+                                       return_value=8):
+                    with terminal.capture() as (out, err):
+                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                               args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        self.assertIn('-j8', out.getvalue())
+
+    def test_build_wasm_no_emcc(self):
+        """Test that a missing SDK is reported"""
+        args = cmdline.parse_args(['build', 'sandbox_wasm'])
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with terminal.capture() as (out, err):
+                ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+        self.assertEqual(1, ret)
+        self.assertEqual('Cannot find emcc at '
+                         '/nope/upstream/emscripten/emcc\n', err.getvalue())
+        self.assertEqual(
+            "Install the Emscripten SDK, or set 'emsdk_dir' in ~/.uman\n",
+            out.getvalue())
+
+    def test_build_wasm_lto_warning(self):
+        """Test that -L is reported as unsupported"""
+        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm', '-L'])
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (_, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+        self.assertEqual(0, ret)
+        self.assertEqual(
+            'LTO is not supported for WebAssembly, ignoring -L\n',
+            err.getvalue())
+
+    def test_build_wasm_failure(self):
+        """Test that a failed defconfig stops the build"""
+        args = cmdline.parse_args(['build', 'sandbox_wasm'])
+        cap = []
+
+        def mock_exec_cmd(cmd, *_args, **_kwargs):
+            cap.append(cmd)
+            return command.CommandResult(return_code=2)
+
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.os.path, 'exists',
+                                   return_value=True):
+                with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                    with terminal.capture() as (_, err):
+                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                               args)
+        self.assertEqual(2, ret)
+        self.assertEqual('Configuration failed\n', err.getvalue())
+        # The build must not run when the configuration failed
+        self.assertEqual(1, len(cap))
+
+    def test_build_run_dispatches_wasm(self):
+        """Test that run() sends a _wasm board to the Emscripten build"""
+        args = cmdline.parse_args(['build', 'sandbox_wasm'])
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm',
+                                   return_value=0) as mock_wasm:
+                with mock.patch.object(settings, 'get',
+                                       return_value='/tmp/b'):
+                    with terminal.capture():
+                        ret = build.run(args)
+        self.assertEqual(0, ret)
+        mock_wasm.assert_called_once_with(
+            'sandbox_wasm', '/tmp/b/sandbox_wasm', args)
+
     def test_build_board_lto_default(self):
         """Test that build_board() passes -L by default (LTO disabled)"""
         cap = []

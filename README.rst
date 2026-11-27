@@ -1076,6 +1076,34 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
 - ``--no-trace-early``: Disable TRACE_EARLY when using -T
 - ``-e, --env KEY=VALUE``: Set environment variable for build (repeatable)
 
+WebAssembly Builds
+~~~~~~~~~~~~~~~~~~
+
+A board whose name ends in ``_wasm`` is built as WebAssembly with the
+Emscripten SDK::
+
+    uman build sandbox_wasm
+
+This needs a U-Boot tree with WebAssembly support, which provides
+``configs/sandbox_wasm_defconfig``; see ``doc/arch/sandbox/wasm.rst`` there.
+The SDK is expected at ``~/dev/emsdk``, which the ``emsdk_dir`` setting
+overrides.
+
+These builds run make directly rather than through buildman, since the
+compiler and the SDK's LLVM tools must be passed to make for the defconfig
+step as well as the build: Kconfig works out that the target is WebAssembly
+from the compiler. The ``all`` target does not work yet, so ``u-boot``,
+``u-boot-web.js`` and ``dtbs`` are built explicitly. The options which
+buildman provides (such as ``-a``, ``-c``, ``-t`` and ``-L``) therefore do
+not apply; ``-j``, ``-F`` and ``-o`` do.
+
+The build produces ``u-boot`` (a JavaScript loader) and ``u-boot.wasm`` for
+node, plus ``u-boot-web.js`` and ``u-boot-web.wasm`` for a browser::
+
+    cd /tmp/b/sandbox_wasm
+    node u-boot -d arch/sandbox/dts/sandbox.dtb
+    node u-boot -T -c "ut hush"
+
 Setup Subcommand
 ----------------
 
@@ -1169,6 +1197,9 @@ Settings are stored in ``~/.uman`` (created on first run)::
 
     # Directory for firmware blobs (OpenSBI, TF-A, etc.)
     blobs_dir = ~/dev/blobs
+
+    # Emscripten SDK, used to build sandbox as WebAssembly
+    # emsdk_dir = ~/dev/emsdk
 
     # OPENSBI firmware paths for RISC-V testing (built by 'uman setup')
     opensbi = ~/dev/blobs/opensbi/fw_dynamic.bin

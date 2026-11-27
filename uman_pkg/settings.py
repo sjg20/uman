@@ -30,6 +30,9 @@ build_dir = /tmp/b
 # Directory for firmware blobs (OpenSBI, etc.)
 blobs_dir = ~/dev/blobs
 
+# Emscripten SDK, used to build sandbox as WebAssembly (default: ~/dev/emsdk)
+# emsdk_dir = ~/dev/emsdk
+
 # OPENSBI firmware paths for RISC-V testing (built by 'uman setup')
 opensbi = ~/dev/blobs/opensbi/fw_dynamic.bin
 opensbi_rv32 = ~/dev/blobs/opensbi/fw_dynamic_rv32.bin
