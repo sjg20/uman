@@ -33,6 +33,13 @@ blobs_dir = ~/dev/blobs
 # Emscripten SDK, used to build sandbox as WebAssembly (default: ~/dev/emsdk)
 # emsdk_dir = ~/dev/emsdk
 
+# Number of make jobs for builds when -j is not given (default: buildman
+# chooses, or the number of CPUs for a WebAssembly build)
+# build_jobs = 4
+
+# Run builds under nice at this niceness (default: not niced)
+# build_nice = 10
+
 # OPENSBI firmware paths for RISC-V testing (built by 'uman setup')
 opensbi = ~/dev/blobs/opensbi/fw_dynamic.bin
 opensbi_rv32 = ~/dev/blobs/opensbi/fw_dynamic_rv32.bin

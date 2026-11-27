@@ -1064,7 +1064,9 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
   HEAD fails and upstream builds)
 - ``--gprof``: Enable gprof profiling (sets GPROF=1)
 - ``-I, --in-tree``: Build in source tree, not separate directory
-- ``-j, --jobs JOBS``: Number of parallel jobs (passed to make)
+- ``-j, --jobs JOBS``: Number of parallel jobs (passed to make). The
+  ``build_jobs`` setting provides a default, and ``build_nice`` runs builds
+  under nice, which helps on a machine shared with other work
 - ``-L, --lto``: Don't disable LTO, so boards whose defconfig enables it use
   it; add ``-a LTO`` for other boards
 - ``-o, --output-dir DIR``: Override output directory
@@ -1200,6 +1202,13 @@ Settings are stored in ``~/.uman`` (created on first run)::
 
     # Emscripten SDK, used to build sandbox as WebAssembly
     # emsdk_dir = ~/dev/emsdk
+
+    # Number of make jobs for builds when -j is not given (default: buildman
+    # chooses, or the number of CPUs for a WebAssembly build)
+    # build_jobs = 4
+
+    # Run builds under nice at this niceness (default: not niced)
+    # build_nice = 10
 
     # OPENSBI firmware paths for RISC-V testing (built by 'uman setup')
     opensbi = ~/dev/blobs/opensbi/fw_dynamic.bin

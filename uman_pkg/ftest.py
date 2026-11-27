@@ -8,6 +8,7 @@
 
 import argparse
 import ast
+import configparser
 import base64
 import os
 import shutil
@@ -442,6 +443,25 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
     def setUp(self):
         super().setUp()
         tout.init(tout.NOTICE)
+        # Use the default settings rather than the user's ~/.uman, so that
+        # settings such as build_jobs do not change the commands being checked
+        self.orig_config = settings.SETTINGS['config']
+        cfg = configparser.ConfigParser()
+        cfg.read_string(settings.DEFAULT_CONFIG)
+        settings.SETTINGS['config'] = cfg
+
+    def tearDown(self):
+        settings.SETTINGS['config'] = self.orig_config
+        super().tearDown()
+
+    def set_setting(self, name, value):
+        """Set a uman setting for the duration of a test
+
+        Args:
+            name (str): Name of the setting
+            value (str): Value to give it
+        """
+        settings.SETTINGS['config'].set('DEFAULT', name, value)
 
     def test_get_dir(self):
         """Test build directory generation"""
@@ -634,6 +654,92 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         self.assertEqual(0, ret)
         mock_wasm.assert_called_once_with(
             'sandbox_wasm', '/tmp/b/sandbox_wasm', args)
+
+    def test_get_int_setting(self):
+        """Test reading a setting which must be an integer"""
+        self.assertIsNone(build.get_int_setting('build_jobs'))
+
+        self.set_setting('build_jobs', '4')
+        self.assertEqual(4, build.get_int_setting('build_jobs'))
+
+        self.set_setting('build_jobs', 'lots')
+        with terminal.capture() as (out, err):
+            self.assertIsNone(build.get_int_setting('build_jobs'))
+        self.assertFalse(out.getvalue())
+        self.assertEqual(
+            "Ignoring setting 'build_jobs': not an integer: lots\n",
+            err.getvalue())
+
+    def test_get_jobs(self):
+        """Test that -j takes precedence over the build_jobs setting"""
+        self.assertIsNone(build.get_jobs(None))
+        self.assertEqual(8, build.get_jobs(8))
+
+        self.set_setting('build_jobs', '4')
+        self.assertEqual(4, build.get_jobs(None))
+        self.assertEqual(8, build.get_jobs(8))
+
+    def test_get_nice(self):
+        """Test the nice prefix from the build_nice setting"""
+        self.assertEqual([], build.get_nice())
+
+        self.set_setting('build_nice', '10')
+        self.assertEqual(['nice', '-n', '10'], build.get_nice())
+
+    def test_buildman_nice(self):
+        """Test that buildman builds run under nice when asked"""
+        self.set_setting('build_nice', '10')
+        with mock.patch.object(build, 'get_buildman', return_value='bm'):
+            with terminal.capture() as (out, err):
+                build.buildman('--boards', 'sandbox', dry_run=True)
+        self.assertEqual('nice -n 10 bm --boards sandbox\n', out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_get_buildman_args_jobs_setting(self):
+        """Test that build_jobs gives buildman a job count"""
+        self.set_setting('build_jobs', '4')
+        args = cmdline.parse_args(['build', 'sandbox'])
+        bm_args = build.get_buildman_args(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual('4', bm_args[bm_args.index('-j') + 1])
+
+        # -j on the command line wins
+        args = cmdline.parse_args(['build', 'sandbox', '-j', '2'])
+        bm_args = build.get_buildman_args(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual('2', bm_args[bm_args.index('-j') + 1])
+
+    def test_build_board_jobs_setting(self):
+        """Test that build_board() uses build_jobs too"""
+        self.set_setting('build_jobs', '4')
+        cap = []
+
+        def mock_exec_cmd(cmd, *_args, **_kwargs):
+            cap.append(cmd)
+            return command.CommandResult(return_code=0)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                with terminal.capture():
+                    build.build_board('sandbox')
+        self.assertEqual('4', cap[0][cap[0].index('-j') + 1])
+
+    def test_build_wasm_settings(self):
+        """Test that a WebAssembly build uses build_jobs and build_nice"""
+        self.set_setting('build_jobs', '4')
+        self.set_setting('build_nice', '10')
+        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm'])
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (out, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        lines = [line for line in out.getvalue().splitlines()
+                 if 'make' in line]
+        self.assertEqual(2, len(lines))
+        for line in lines:
+            self.assertIn(' nice -n 10 make -s O=/tmp/b/sbw ', line)
+        self.assertTrue(lines[1].endswith(
+            ' -j4 u-boot u-boot-web.js dtbs'))
 
     def test_build_board_lto_default(self):
         """Test that build_board() passes -L by default (LTO disabled)"""

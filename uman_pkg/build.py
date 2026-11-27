@@ -45,6 +45,52 @@ WASM_TARGETS = ['u-boot', 'u-boot-web.js', 'dtbs']
 EMSDK_DEFAULT = '~/dev/emsdk'
 
 
+def get_int_setting(name):
+    """Get a setting which must be an integer
+
+    Args:
+        name (str): Name of the setting
+
+    Returns:
+        int or None: Value of the setting, or None if it is not set or is not
+            an integer
+    """
+    val = settings.get(name)
+    if not val:
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        tout.warning(f"Ignoring setting '{name}': not an integer: {val}")
+        return None
+
+
+def get_jobs(jobs):
+    """Get the number of make jobs to use for a build
+
+    Args:
+        jobs (int or None): Number of jobs requested with -j, if any
+
+    Returns:
+        int or None: Jobs requested with -j, else the build_jobs setting, else
+            None to let the build choose
+    """
+    return jobs or get_int_setting('build_jobs')
+
+
+def get_nice():
+    """Get the command prefix which runs a build under nice
+
+    Returns:
+        list of str: Prefix for the build command, empty if the build_nice
+            setting is not set
+    """
+    level = get_int_setting('build_nice')
+    if level is None:
+        return []
+    return ['nice', '-n', str(level)]
+
+
 def is_wasm(board):
     """Check whether a board builds as WebAssembly
 
@@ -133,7 +179,8 @@ def build_wasm(board, build_dir, args):
         tout.warning('LTO is not supported for WebAssembly, ignoring -L')
 
     env = get_wasm_env(emsdk)
-    base = ['make', '-s', f'O={build_dir}'] + get_wasm_vars(emsdk)
+    base = get_nice() + ['make', '-s', f'O={build_dir}']
+    base += get_wasm_vars(emsdk)
 
     tout.progress(f'Configuring {board}')
     result = exec_cmd(base + [f'{board}_defconfig'], args.dry_run, env=env,
@@ -143,7 +190,8 @@ def build_wasm(board, build_dir, args):
         return result.return_code
 
     tout.progress(f'Building {board}')
-    cmd = base + [f'-j{args.jobs or os.cpu_count()}'] + WASM_TARGETS
+    jobs = get_jobs(args.jobs) or os.cpu_count()
+    cmd = base + [f'-j{jobs}'] + WASM_TARGETS
     result = exec_cmd(cmd, args.dry_run, env=env, capture=False)
     if result and result.return_code:
         tout.error('Build failed')
@@ -265,7 +313,7 @@ def buildman(*args, env=None, dry_run=False, capture=True):
         CommandResult or None: Result with return_code, stdout, stderr,
             or None if dry_run
     """
-    cmd = [get_buildman()] + list(args)
+    cmd = get_nice() + [get_buildman()] + list(args)
     return exec_cmd(cmd, dry_run=dry_run, env=env, capture=capture)
 
 
@@ -332,8 +380,9 @@ def get_buildman_args(args, board, build_dir):
         bm_args = base_bm_args(board, build_dir, args.lto)
     if args.target:
         bm_args.extend(['--target', args.target])
-    if args.jobs:
-        bm_args.extend(['-j', str(args.jobs)])
+    jobs = get_jobs(args.jobs)
+    if jobs:
+        bm_args.extend(['-j', str(jobs)])
     if args.force_reconfig:
         bm_args.append('-C')
     if args.adjust_cfg:
@@ -381,6 +430,7 @@ def build_board(board, dry_run=False, lto=False, adjust_cfg=None,
     bm_args = base_bm_args(board, build_dir, lto)
     if force_reconfig:
         bm_args.append('-C')
+    jobs = get_jobs(jobs)
     if jobs:
         bm_args.extend(['-j', str(jobs)])
     if adjust_cfg:
