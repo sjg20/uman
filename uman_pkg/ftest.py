@@ -562,11 +562,11 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
 
     def test_build_wasm_commands(self):
         """Test the defconfig and build commands for WebAssembly"""
-        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm', '-j', '4'])
         with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
             with mock.patch.object(build.glob, 'glob', return_value=[]):
                 with terminal.capture() as (out, err):
-                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True, jobs=4)
         self.assertEqual(0, ret)
         self.assertFalse(err.getvalue())
         lines = [line for line in out.getvalue().splitlines()
@@ -583,24 +583,22 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
 
     def test_build_wasm_jobs_default(self):
         """Test that the job count defaults to the number of CPUs"""
-        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm'])
         with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
             with mock.patch.object(build.glob, 'glob', return_value=[]):
                 with mock.patch.object(build.os, 'cpu_count',
                                        return_value=8):
                     with terminal.capture() as (out, err):
                         ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
-                                               args)
+                                               dry_run=True)
         self.assertEqual(0, ret)
         self.assertFalse(err.getvalue())
         self.assertIn('-j8', out.getvalue())
 
     def test_build_wasm_no_emcc(self):
         """Test that a missing SDK is reported"""
-        args = cmdline.parse_args(['build', 'sandbox_wasm'])
         with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
             with terminal.capture() as (out, err):
-                ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+                ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw')
         self.assertEqual(1, ret)
         self.assertEqual('Cannot find emcc at '
                          '/nope/upstream/emscripten/emcc\n', err.getvalue())
@@ -610,11 +608,11 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
 
     def test_build_wasm_lto_warning(self):
         """Test that -L is reported as unsupported"""
-        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm', '-L'])
         with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
             with mock.patch.object(build.glob, 'glob', return_value=[]):
                 with terminal.capture() as (_, err):
-                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True, lto=True)
         self.assertEqual(0, ret)
         self.assertEqual(
             'LTO is not supported for WebAssembly, ignoring -L\n',
@@ -622,7 +620,6 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
 
     def test_build_wasm_failure(self):
         """Test that a failed defconfig stops the build"""
-        args = cmdline.parse_args(['build', 'sandbox_wasm'])
         cap = []
 
         def mock_exec_cmd(cmd, *_args, **_kwargs):
@@ -634,8 +631,7 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
                                    return_value=True):
                 with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
                     with terminal.capture() as (_, err):
-                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
-                                               args)
+                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw')
         self.assertEqual(2, ret)
         self.assertEqual('Configuration failed\n', err.getvalue())
         # The build must not run when the configuration failed
@@ -653,7 +649,7 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
                         ret = build.run(args)
         self.assertEqual(0, ret)
         mock_wasm.assert_called_once_with(
-            'sandbox_wasm', '/tmp/b/sandbox_wasm', args)
+            'sandbox_wasm', '/tmp/b/sandbox_wasm', False, False, None)
 
     def test_get_int_setting(self):
         """Test reading a setting which must be an integer"""
@@ -726,11 +722,11 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         """Test that a WebAssembly build uses build_jobs and build_nice"""
         self.set_setting('build_jobs', '4')
         self.set_setting('build_nice', '10')
-        args = cmdline.parse_args(['-n', 'build', 'sandbox_wasm'])
         with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
             with mock.patch.object(build.glob, 'glob', return_value=[]):
                 with terminal.capture() as (out, err):
-                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw', args)
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True)
         self.assertEqual(0, ret)
         self.assertFalse(err.getvalue())
         lines = [line for line in out.getvalue().splitlines()
@@ -740,6 +736,19 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
             self.assertIn(' nice -n 10 make -s O=/tmp/b/sbw ', line)
         self.assertTrue(lines[1].endswith(
             ' -j4 u-boot u-boot-web.js dtbs'))
+
+    def test_build_board_wasm(self):
+        """Test that build_board() builds a _wasm board with Emscripten"""
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm',
+                                   return_value=0) as mock_wasm:
+                self.assertTrue(build.build_board('sandbox_wasm', jobs=4))
+        mock_wasm.assert_called_once_with(
+            'sandbox_wasm', '/tmp/b/sandbox_wasm', False, False, 4)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm', return_value=2):
+                self.assertFalse(build.build_board('sandbox_wasm'))
 
     def test_build_board_lto_default(self):
         """Test that build_board() passes -L by default (LTO disabled)"""
@@ -8544,6 +8553,91 @@ class TestPytestSpec(TestBase):
         self.assertIn('-k', cmd)
         spec = cmd[cmd.index('-k') + 1]
         self.assertEqual('(test_passage)', spec)
+
+
+class TestPytestWasm(TestBase):
+    """Tests for running test.py on a WebAssembly build"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.NOTICE)
+        # Use the default settings rather than the user's ~/.uman
+        self.orig_config = settings.SETTINGS['config']
+        cfg = configparser.ConfigParser()
+        cfg.read_string(settings.DEFAULT_CONFIG)
+        settings.SETTINGS['config'] = cfg
+
+    def tearDown(self):
+        settings.SETTINGS['config'] = self.orig_config
+        super().tearDown()
+
+    def test_get_test_board(self):
+        """Test that a WebAssembly build is tested as its base board"""
+        self.assertEqual('sandbox', cmdpy.get_test_board('sandbox_wasm'))
+        self.assertEqual('sandbox', cmdpy.get_test_board('sandbox'))
+        self.assertEqual('qemu-x86', cmdpy.get_test_board('qemu-x86'))
+
+    def test_build_pytest_cmd(self):
+        """Test the test.py command for a WebAssembly build"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox_wasm',
+                                   'test_ut and hush'])
+        with mock.patch.object(cmdpy, 'get_board_test_id',
+                               return_value='na'):
+            with mock.patch.object(cmdpy, 'get_board_test_spec',
+                                   return_value=None):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    cmd = cmdpy.build_pytest_cmd(args)
+        # The tests are marked for 'sandbox', but the build is elsewhere
+        self.assertEqual(
+            ['./test/py/test.py', '-B', 'sandbox',
+             '--build-dir', '/tmp/b/sandbox_wasm', '--buildman',
+             '--id', 'na', '-k', 'test_ut and hush', '-q'], cmd)
+
+    def test_get_pytest_env(self):
+        """Test that other boards get the normal environment"""
+        env = cmdpy.get_pytest_env('sandbox', {'FOO': 'bar'})
+        self.assertEqual('bar', env['FOO'])
+        self.assertEqual(os.environ['PATH'], env['PATH'])
+        self.assertNotIn('EMSDK', env)
+
+    def test_get_pytest_env_wasm(self):
+        """Test that node is put in the PATH, keeping the hooks"""
+        pytest_vars = {'PATH': '/hooks:/usr/bin'}
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob',
+                                   return_value=['/sdk/node/24/bin']):
+                with mock.patch.object(cmdpy.shutil, 'which',
+                                       return_value='/sdk/node/24/bin/node'):
+                    env = cmdpy.get_pytest_env('sandbox_wasm', pytest_vars)
+        self.assertEqual('/sdk', env['EMSDK'])
+        # The hooks directory from pytest_env() must not be lost
+        self.assertEqual(
+            '/sdk/upstream/emscripten:/sdk/node/24/bin:/hooks:/usr/bin',
+            env['PATH'])
+
+    def test_get_pytest_env_no_node(self):
+        """Test that a missing node is reported"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with mock.patch.object(cmdpy.shutil, 'which', return_value=None):
+                with terminal.capture() as (out, err):
+                    env = cmdpy.get_pytest_env('sandbox_wasm', {})
+        self.assertIsNone(env)
+        self.assertEqual(
+            'Cannot find node, to run the WebAssembly build\n',
+            err.getvalue())
+        self.assertEqual(
+            "Install the Emscripten SDK, or set 'emsdk_dir' in ~/.uman\n",
+            out.getvalue())
+
+    def test_get_pytest_env_dry_run(self):
+        """Test that a dry run does not need node"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with mock.patch.object(cmdpy.shutil, 'which',
+                                   return_value=None) as mock_which:
+                env = cmdpy.get_pytest_env('sandbox_wasm', {}, dry_run=True)
+        self.assertEqual('/nope', env['EMSDK'])
+        mock_which.assert_not_called()
 
 
 class TestDockerTest(TestBase):

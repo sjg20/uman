@@ -770,6 +770,17 @@ hooks to PATH.
     # Pass extra arguments to pytest (after --)
     uman py -B sandbox TestFsBasic -- --fs-type ext4
 
+    # Build sandbox as WebAssembly and run its unit tests under node
+    uman py -B sandbox_wasm -b test_ut and hush
+
+A ``_wasm`` board is built as WebAssembly (see `WebAssembly Builds`_) and
+tested as its base board, so ``-B sandbox_wasm`` runs test.py with
+``-B sandbox``, since the tests are marked for that board, and with the build
+directory ``sandbox_wasm``. The Emscripten SDK's directories are put in
+``PATH`` so that test.py can run the build under node. This needs a U-Boot
+tree whose test.py runs sandbox under node for a WebAssembly build, and whose
+build writes ``u-boot.sym``, without which no unit tests are found.
+
 **Options**:
 
 - ``test_spec``: Test specification using pytest -k syntax (positional)

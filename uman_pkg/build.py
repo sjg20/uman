@@ -112,18 +112,20 @@ def get_emsdk():
     return settings.get('emsdk_dir', EMSDK_DEFAULT)
 
 
-def get_wasm_env(emsdk):
-    """Build the environment needed to run emcc
+def get_wasm_env(emsdk, base=None):
+    """Build the environment needed to run emcc and node
 
     This does the same job as sourcing emsdk_env.sh, which needs bash.
 
     Args:
         emsdk (str): Path to the Emscripten SDK
+        base (dict or None): Environment to start from, or None to use the
+            current one
 
     Returns:
-        dict: Environment for the build
+        dict: Environment with the SDK's directories at the front of PATH
     """
-    env = os.environ.copy()
+    env = dict(os.environ if base is None else base)
     paths = [os.path.join(emsdk, 'upstream', 'emscripten')]
 
     # The SDK brings its own node, in a directory named after the version
@@ -152,7 +154,7 @@ def get_wasm_vars(emsdk):
     return make_vars
 
 
-def build_wasm(board, build_dir, args):
+def build_wasm(board, build_dir, dry_run=False, lto=False, jobs=None):
     """Build U-Boot as WebAssembly, using the Emscripten SDK
 
     This runs make directly rather than going through buildman, since the
@@ -162,20 +164,22 @@ def build_wasm(board, build_dir, args):
     Args:
         board (str): Board name, e.g. sandbox_wasm
         build_dir (str): Build directory
-        args (argparse.Namespace): Arguments from cmdline
+        dry_run (bool): If True, just show the commands
+        lto (bool): True if LTO was requested, which is not supported
+        jobs (int or None): Number of make jobs requested, if any
 
     Returns:
         int: Exit code
     """
     emsdk = get_emsdk()
     emcc = os.path.join(emsdk, 'upstream', 'emscripten', 'emcc')
-    if not args.dry_run and not os.path.exists(emcc):
+    if not dry_run and not os.path.exists(emcc):
         tout.error(f'Cannot find emcc at {emcc}')
         tout.notice("Install the Emscripten SDK, or set 'emsdk_dir' in "
                     '~/.uman')
         return 1
 
-    if args.lto:
+    if lto:
         tout.warning('LTO is not supported for WebAssembly, ignoring -L')
 
     env = get_wasm_env(emsdk)
@@ -183,16 +187,16 @@ def build_wasm(board, build_dir, args):
     base += get_wasm_vars(emsdk)
 
     tout.progress(f'Configuring {board}')
-    result = exec_cmd(base + [f'{board}_defconfig'], args.dry_run, env=env,
+    result = exec_cmd(base + [f'{board}_defconfig'], dry_run, env=env,
                       capture=False)
     if result and result.return_code:
         tout.error('Configuration failed')
         return result.return_code
 
     tout.progress(f'Building {board}')
-    jobs = get_jobs(args.jobs) or os.cpu_count()
+    jobs = get_jobs(jobs) or os.cpu_count()
     cmd = base + [f'-j{jobs}'] + WASM_TARGETS
-    result = exec_cmd(cmd, args.dry_run, env=env, capture=False)
+    result = exec_cmd(cmd, dry_run, env=env, capture=False)
     if result and result.return_code:
         tout.error('Build failed')
         return result.return_code
@@ -425,6 +429,9 @@ def build_board(board, dry_run=False, lto=False, adjust_cfg=None,
         if not dry_run:
             shutil.rmtree(build_dir)
 
+    if is_wasm(board):
+        return not build_wasm(board, build_dir, dry_run, lto, jobs)
+
     tout.progress(f'Building {board}')
 
     bm_args = base_bm_args(board, build_dir, lto)
@@ -608,7 +615,7 @@ def run(args):
             shutil.rmtree(build_dir)
 
     if is_wasm(board):
-        return build_wasm(board, build_dir, args)
+        return build_wasm(board, build_dir, args.dry_run, args.lto, args.jobs)
 
     bm_args = get_buildman_args(args, board, build_dir)
 
