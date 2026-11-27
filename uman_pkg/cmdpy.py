@@ -490,6 +490,51 @@ def check_qemu_binary(board, board_id):
     return binary, shutil.which(binary) is not None
 
 
+def get_test_board(board):
+    """Get the board name to pass to test.py
+
+    A WebAssembly build of sandbox runs the sandbox tests, which are marked
+    for the 'sandbox' board and would all be skipped for 'sandbox_wasm'.
+
+    Args:
+        board (str): Board name, e.g. sandbox_wasm
+
+    Returns:
+        str: Board to tell test.py about, e.g. sandbox
+    """
+    if build_mod.is_wasm(board):
+        return board.removesuffix('_wasm')
+    return board
+
+
+def get_pytest_env(board, pytest_vars, dry_run=False):
+    """Get the environment to run test.py in
+
+    A WebAssembly build runs under node, so the Emscripten SDK's directories
+    must be in the PATH.
+
+    Args:
+        board (str): Board name
+        pytest_vars (dict): Variables from pytest_env() and -e
+        dry_run (bool): True to skip checking that node can be found
+
+    Returns:
+        dict: Environment to use, or None if node cannot be found
+    """
+    env = os.environ.copy()
+    env.update(pytest_vars)
+    if not build_mod.is_wasm(board):
+        return env
+
+    env = build_mod.get_wasm_env(build_mod.get_emsdk(), env)
+    if not dry_run and not shutil.which('node', path=env['PATH']):
+        tout.error('Cannot find node, to run the WebAssembly build')
+        tout.notice("Install the Emscripten SDK, or set 'emsdk_dir' in "
+                    '~/.uman')
+        return None
+    return env
+
+
 def build_pytest_cmd(args):
     """Build the pytest command line
 
@@ -500,7 +545,7 @@ def build_pytest_cmd(args):
         list: Command and arguments to run
     """
     cmd = ['./test/py/test.py']
-    cmd.extend(['-B', args.board])
+    cmd.extend(['-B', get_test_board(args.board)])
 
     if args.output_dir:
         build_dir = args.output_dir
@@ -1693,8 +1738,9 @@ def do_pytest(args):  # pylint: disable=too-many-return-statements,too-many-bran
         tout.notice(f'In another terminal: um py -G -B {args.board}')
     cmd = build_pytest_cmd(args)
 
-    env = os.environ.copy()
-    env.update(pytest_vars)
+    env = get_pytest_env(args.board, pytest_vars, args.dry_run)
+    if env is None:
+        return 1
 
     # Handle -G: just launch gdb to connect to existing gdbserver
     if args.gdb:

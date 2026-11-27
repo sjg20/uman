@@ -770,6 +770,17 @@ hooks to PATH.
     # Pass extra arguments to pytest (after --)
     uman py -B sandbox TestFsBasic -- --fs-type ext4
 
+    # Build sandbox as WebAssembly and run its unit tests under node
+    uman py -B sandbox_wasm -b test_ut and hush
+
+A ``_wasm`` board is built as WebAssembly (see `WebAssembly Builds`_) and
+tested as its base board, so ``-B sandbox_wasm`` runs test.py with
+``-B sandbox``, since the tests are marked for that board, and with the build
+directory ``sandbox_wasm``. The Emscripten SDK's directories are put in
+``PATH`` so that test.py can run the build under node. This needs a U-Boot
+tree whose test.py runs sandbox under node for a WebAssembly build, and whose
+build writes ``u-boot.sym``, without which no unit tests are found.
+
 **Options**:
 
 - ``test_spec``: Test specification using pytest -k syntax (positional)
@@ -1064,7 +1075,9 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
   HEAD fails and upstream builds)
 - ``--gprof``: Enable gprof profiling (sets GPROF=1)
 - ``-I, --in-tree``: Build in source tree, not separate directory
-- ``-j, --jobs JOBS``: Number of parallel jobs (passed to make)
+- ``-j, --jobs JOBS``: Number of parallel jobs (passed to make). The
+  ``build_jobs`` setting provides a default, and ``build_nice`` runs builds
+  under nice, which helps on a machine shared with other work
 - ``-L, --lto``: Don't disable LTO, so boards whose defconfig enables it use
   it; add ``-a LTO`` for other boards
 - ``-o, --output-dir DIR``: Override output directory
@@ -1075,6 +1088,34 @@ The ``build`` command (alias ``b``) builds U-Boot for a specified board::
   CONFIG_TRACE_EARLY)
 - ``--no-trace-early``: Disable TRACE_EARLY when using -T
 - ``-e, --env KEY=VALUE``: Set environment variable for build (repeatable)
+
+WebAssembly Builds
+~~~~~~~~~~~~~~~~~~
+
+A board whose name ends in ``_wasm`` is built as WebAssembly with the
+Emscripten SDK::
+
+    uman build sandbox_wasm
+
+This needs a U-Boot tree with WebAssembly support, which provides
+``configs/sandbox_wasm_defconfig``; see ``doc/arch/sandbox/wasm.rst`` there.
+The SDK is expected at ``~/dev/emsdk``, which the ``emsdk_dir`` setting
+overrides.
+
+These builds run make directly rather than through buildman, since the
+compiler and the SDK's LLVM tools must be passed to make for the defconfig
+step as well as the build: Kconfig works out that the target is WebAssembly
+from the compiler. The ``all`` target does not work yet, so ``u-boot``,
+``u-boot-web.js`` and ``dtbs`` are built explicitly. The options which
+buildman provides (such as ``-a``, ``-c``, ``-t`` and ``-L``) therefore do
+not apply; ``-j``, ``-F`` and ``-o`` do.
+
+The build produces ``u-boot`` (a JavaScript loader) and ``u-boot.wasm`` for
+node, plus ``u-boot-web.js`` and ``u-boot-web.wasm`` for a browser::
+
+    cd /tmp/b/sandbox_wasm
+    node u-boot -d arch/sandbox/dts/sandbox.dtb
+    node u-boot -T -c "ut hush"
 
 Setup Subcommand
 ----------------
@@ -1169,6 +1210,16 @@ Settings are stored in ``~/.uman`` (created on first run)::
 
     # Directory for firmware blobs (OpenSBI, TF-A, etc.)
     blobs_dir = ~/dev/blobs
+
+    # Emscripten SDK, used to build sandbox as WebAssembly
+    # emsdk_dir = ~/dev/emsdk
+
+    # Number of make jobs for builds when -j is not given (default: buildman
+    # chooses, or the number of CPUs for a WebAssembly build)
+    # build_jobs = 4
+
+    # Run builds under nice at this niceness (default: not niced)
+    # build_nice = 10
 
     # OPENSBI firmware paths for RISC-V testing (built by 'uman setup')
     opensbi = ~/dev/blobs/opensbi/fw_dynamic.bin

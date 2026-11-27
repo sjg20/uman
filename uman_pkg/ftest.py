@@ -8,6 +8,7 @@
 
 import argparse
 import ast
+import configparser
 import base64
 import os
 import shutil
@@ -442,6 +443,25 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
     def setUp(self):
         super().setUp()
         tout.init(tout.NOTICE)
+        # Use the default settings rather than the user's ~/.uman, so that
+        # settings such as build_jobs do not change the commands being checked
+        self.orig_config = settings.SETTINGS['config']
+        cfg = configparser.ConfigParser()
+        cfg.read_string(settings.DEFAULT_CONFIG)
+        settings.SETTINGS['config'] = cfg
+
+    def tearDown(self):
+        settings.SETTINGS['config'] = self.orig_config
+        super().tearDown()
+
+    def set_setting(self, name, value):
+        """Set a uman setting for the duration of a test
+
+        Args:
+            name (str): Name of the setting
+            value (str): Value to give it
+        """
+        settings.SETTINGS['config'].set('DEFAULT', name, value)
 
     def test_get_dir(self):
         """Test build directory generation"""
@@ -505,6 +525,230 @@ class TestBuildSubcommand(TestBase):  # pylint: disable=R0904
         """Test that -L is not passed when --lto is specified"""
         args = cmdline.parse_args(['build', 'sandbox', '-L'])
         self.assertNotIn('-L', build.get_cmd(args, 'sandbox', '/tmp/b/sandbox'))
+
+    def test_is_wasm(self):
+        """Test that only _wasm boards are built as WebAssembly"""
+        self.assertTrue(build.is_wasm('sandbox_wasm'))
+        self.assertFalse(build.is_wasm('sandbox'))
+        self.assertFalse(build.is_wasm('wasm_sandbox'))
+
+    def test_get_emsdk(self):
+        """Test the emsdk_dir setting, and its default"""
+        with mock.patch.object(settings, 'get',
+                               return_value='/opt/emsdk') as mock_get:
+            self.assertEqual('/opt/emsdk', build.get_emsdk())
+        mock_get.assert_called_once_with('emsdk_dir', build.EMSDK_DEFAULT)
+
+    def test_get_wasm_vars(self):
+        """Test the make variables which select the Emscripten tools"""
+        self.assertEqual(
+            ['CC=emcc', 'AR=emar',
+             'NM=/sdk/upstream/bin/llvm-nm',
+             'LD=/sdk/upstream/bin/wasm-ld',
+             'OBJCOPY=/sdk/upstream/bin/llvm-objcopy',
+             'OBJDUMP=/sdk/upstream/bin/llvm-objdump'],
+            build.get_wasm_vars('/sdk'))
+
+    def test_get_wasm_env(self):
+        """Test the environment set up for emcc"""
+        with mock.patch.object(build.glob, 'glob',
+                               return_value=['/sdk/node/24.1.0_64bit/bin']):
+            env = build.get_wasm_env('/sdk')
+        self.assertEqual('/sdk', env['EMSDK'])
+        self.assertTrue(env['PATH'].startswith(
+            '/sdk/upstream/emscripten:/sdk/node/24.1.0_64bit/bin:'))
+        # The existing PATH must be kept, after the SDK directories
+        self.assertIn(os.environ['PATH'], env['PATH'])
+
+    def test_build_wasm_commands(self):
+        """Test the defconfig and build commands for WebAssembly"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (out, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True, jobs=4)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        lines = [line for line in out.getvalue().splitlines()
+                 if 'make' in line]
+        self.assertEqual(2, len(lines))
+        self.assertTrue(lines[0].endswith(
+            'make -s O=/tmp/b/sbw CC=emcc AR=emar '
+            'NM=/sdk/upstream/bin/llvm-nm LD=/sdk/upstream/bin/wasm-ld '
+            'OBJCOPY=/sdk/upstream/bin/llvm-objcopy '
+            'OBJDUMP=/sdk/upstream/bin/llvm-objdump sandbox_wasm_defconfig'))
+        self.assertTrue(lines[1].endswith(
+            'OBJDUMP=/sdk/upstream/bin/llvm-objdump -j4 '
+            'u-boot u-boot-web.js dtbs'))
+
+    def test_build_wasm_jobs_default(self):
+        """Test that the job count defaults to the number of CPUs"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with mock.patch.object(build.os, 'cpu_count',
+                                       return_value=8):
+                    with terminal.capture() as (out, err):
+                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                               dry_run=True)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        self.assertIn('-j8', out.getvalue())
+
+    def test_build_wasm_no_emcc(self):
+        """Test that a missing SDK is reported"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with terminal.capture() as (out, err):
+                ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw')
+        self.assertEqual(1, ret)
+        self.assertEqual('Cannot find emcc at '
+                         '/nope/upstream/emscripten/emcc\n', err.getvalue())
+        self.assertEqual(
+            "Install the Emscripten SDK, or set 'emsdk_dir' in ~/.uman\n",
+            out.getvalue())
+
+    def test_build_wasm_lto_warning(self):
+        """Test that -L is reported as unsupported"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (_, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True, lto=True)
+        self.assertEqual(0, ret)
+        self.assertEqual(
+            'LTO is not supported for WebAssembly, ignoring -L\n',
+            err.getvalue())
+
+    def test_build_wasm_failure(self):
+        """Test that a failed defconfig stops the build"""
+        cap = []
+
+        def mock_exec_cmd(cmd, *_args, **_kwargs):
+            cap.append(cmd)
+            return command.CommandResult(return_code=2)
+
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.os.path, 'exists',
+                                   return_value=True):
+                with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                    with terminal.capture() as (_, err):
+                        ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw')
+        self.assertEqual(2, ret)
+        self.assertEqual('Configuration failed\n', err.getvalue())
+        # The build must not run when the configuration failed
+        self.assertEqual(1, len(cap))
+
+    def test_build_run_dispatches_wasm(self):
+        """Test that run() sends a _wasm board to the Emscripten build"""
+        args = cmdline.parse_args(['build', 'sandbox_wasm'])
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm',
+                                   return_value=0) as mock_wasm:
+                with mock.patch.object(settings, 'get',
+                                       return_value='/tmp/b'):
+                    with terminal.capture():
+                        ret = build.run(args)
+        self.assertEqual(0, ret)
+        mock_wasm.assert_called_once_with(
+            'sandbox_wasm', '/tmp/b/sandbox_wasm', False, False, None)
+
+    def test_get_int_setting(self):
+        """Test reading a setting which must be an integer"""
+        self.assertIsNone(build.get_int_setting('build_jobs'))
+
+        self.set_setting('build_jobs', '4')
+        self.assertEqual(4, build.get_int_setting('build_jobs'))
+
+        self.set_setting('build_jobs', 'lots')
+        with terminal.capture() as (out, err):
+            self.assertIsNone(build.get_int_setting('build_jobs'))
+        self.assertFalse(out.getvalue())
+        self.assertEqual(
+            "Ignoring setting 'build_jobs': not an integer: lots\n",
+            err.getvalue())
+
+    def test_get_jobs(self):
+        """Test that -j takes precedence over the build_jobs setting"""
+        self.assertIsNone(build.get_jobs(None))
+        self.assertEqual(8, build.get_jobs(8))
+
+        self.set_setting('build_jobs', '4')
+        self.assertEqual(4, build.get_jobs(None))
+        self.assertEqual(8, build.get_jobs(8))
+
+    def test_get_nice(self):
+        """Test the nice prefix from the build_nice setting"""
+        self.assertEqual([], build.get_nice())
+
+        self.set_setting('build_nice', '10')
+        self.assertEqual(['nice', '-n', '10'], build.get_nice())
+
+    def test_buildman_nice(self):
+        """Test that buildman builds run under nice when asked"""
+        self.set_setting('build_nice', '10')
+        with mock.patch.object(build, 'get_buildman', return_value='bm'):
+            with terminal.capture() as (out, err):
+                build.buildman('--boards', 'sandbox', dry_run=True)
+        self.assertEqual('nice -n 10 bm --boards sandbox\n', out.getvalue())
+        self.assertFalse(err.getvalue())
+
+    def test_get_buildman_args_jobs_setting(self):
+        """Test that build_jobs gives buildman a job count"""
+        self.set_setting('build_jobs', '4')
+        args = cmdline.parse_args(['build', 'sandbox'])
+        bm_args = build.get_buildman_args(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual('4', bm_args[bm_args.index('-j') + 1])
+
+        # -j on the command line wins
+        args = cmdline.parse_args(['build', 'sandbox', '-j', '2'])
+        bm_args = build.get_buildman_args(args, 'sandbox', '/tmp/b/sandbox')
+        self.assertEqual('2', bm_args[bm_args.index('-j') + 1])
+
+    def test_build_board_jobs_setting(self):
+        """Test that build_board() uses build_jobs too"""
+        self.set_setting('build_jobs', '4')
+        cap = []
+
+        def mock_exec_cmd(cmd, *_args, **_kwargs):
+            cap.append(cmd)
+            return command.CommandResult(return_code=0)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'exec_cmd', mock_exec_cmd):
+                with terminal.capture():
+                    build.build_board('sandbox')
+        self.assertEqual('4', cap[0][cap[0].index('-j') + 1])
+
+    def test_build_wasm_settings(self):
+        """Test that a WebAssembly build uses build_jobs and build_nice"""
+        self.set_setting('build_jobs', '4')
+        self.set_setting('build_nice', '10')
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob', return_value=[]):
+                with terminal.capture() as (out, err):
+                    ret = build.build_wasm('sandbox_wasm', '/tmp/b/sbw',
+                                           dry_run=True)
+        self.assertEqual(0, ret)
+        self.assertFalse(err.getvalue())
+        lines = [line for line in out.getvalue().splitlines()
+                 if 'make' in line]
+        self.assertEqual(2, len(lines))
+        for line in lines:
+            self.assertIn(' nice -n 10 make -s O=/tmp/b/sbw ', line)
+        self.assertTrue(lines[1].endswith(
+            ' -j4 u-boot u-boot-web.js dtbs'))
+
+    def test_build_board_wasm(self):
+        """Test that build_board() builds a _wasm board with Emscripten"""
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm',
+                                   return_value=0) as mock_wasm:
+                self.assertTrue(build.build_board('sandbox_wasm', jobs=4))
+        mock_wasm.assert_called_once_with(
+            'sandbox_wasm', '/tmp/b/sandbox_wasm', False, False, 4)
+
+        with mock.patch.object(build, 'setup_uboot_dir', return_value=True):
+            with mock.patch.object(build, 'build_wasm', return_value=2):
+                self.assertFalse(build.build_board('sandbox_wasm'))
 
     def test_build_board_lto_default(self):
         """Test that build_board() passes -L by default (LTO disabled)"""
@@ -8309,6 +8553,91 @@ class TestPytestSpec(TestBase):
         self.assertIn('-k', cmd)
         spec = cmd[cmd.index('-k') + 1]
         self.assertEqual('(test_passage)', spec)
+
+
+class TestPytestWasm(TestBase):
+    """Tests for running test.py on a WebAssembly build"""
+
+    def setUp(self):
+        super().setUp()
+        tout.init(tout.NOTICE)
+        # Use the default settings rather than the user's ~/.uman
+        self.orig_config = settings.SETTINGS['config']
+        cfg = configparser.ConfigParser()
+        cfg.read_string(settings.DEFAULT_CONFIG)
+        settings.SETTINGS['config'] = cfg
+
+    def tearDown(self):
+        settings.SETTINGS['config'] = self.orig_config
+        super().tearDown()
+
+    def test_get_test_board(self):
+        """Test that a WebAssembly build is tested as its base board"""
+        self.assertEqual('sandbox', cmdpy.get_test_board('sandbox_wasm'))
+        self.assertEqual('sandbox', cmdpy.get_test_board('sandbox'))
+        self.assertEqual('qemu-x86', cmdpy.get_test_board('qemu-x86'))
+
+    def test_build_pytest_cmd(self):
+        """Test the test.py command for a WebAssembly build"""
+        args = cmdline.parse_args(['py', '-B', 'sandbox_wasm',
+                                   'test_ut and hush'])
+        with mock.patch.object(cmdpy, 'get_board_test_id',
+                               return_value='na'):
+            with mock.patch.object(cmdpy, 'get_board_test_spec',
+                                   return_value=None):
+                with mock.patch.object(cmdpy, 'has_no_full',
+                                       return_value=False):
+                    cmd = cmdpy.build_pytest_cmd(args)
+        # The tests are marked for 'sandbox', but the build is elsewhere
+        self.assertEqual(
+            ['./test/py/test.py', '-B', 'sandbox',
+             '--build-dir', '/tmp/b/sandbox_wasm', '--buildman',
+             '--id', 'na', '-k', 'test_ut and hush', '-q'], cmd)
+
+    def test_get_pytest_env(self):
+        """Test that other boards get the normal environment"""
+        env = cmdpy.get_pytest_env('sandbox', {'FOO': 'bar'})
+        self.assertEqual('bar', env['FOO'])
+        self.assertEqual(os.environ['PATH'], env['PATH'])
+        self.assertNotIn('EMSDK', env)
+
+    def test_get_pytest_env_wasm(self):
+        """Test that node is put in the PATH, keeping the hooks"""
+        pytest_vars = {'PATH': '/hooks:/usr/bin'}
+        with mock.patch.object(build, 'get_emsdk', return_value='/sdk'):
+            with mock.patch.object(build.glob, 'glob',
+                                   return_value=['/sdk/node/24/bin']):
+                with mock.patch.object(cmdpy.shutil, 'which',
+                                       return_value='/sdk/node/24/bin/node'):
+                    env = cmdpy.get_pytest_env('sandbox_wasm', pytest_vars)
+        self.assertEqual('/sdk', env['EMSDK'])
+        # The hooks directory from pytest_env() must not be lost
+        self.assertEqual(
+            '/sdk/upstream/emscripten:/sdk/node/24/bin:/hooks:/usr/bin',
+            env['PATH'])
+
+    def test_get_pytest_env_no_node(self):
+        """Test that a missing node is reported"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with mock.patch.object(cmdpy.shutil, 'which', return_value=None):
+                with terminal.capture() as (out, err):
+                    env = cmdpy.get_pytest_env('sandbox_wasm', {})
+        self.assertIsNone(env)
+        self.assertEqual(
+            'Cannot find node, to run the WebAssembly build\n',
+            err.getvalue())
+        self.assertEqual(
+            "Install the Emscripten SDK, or set 'emsdk_dir' in ~/.uman\n",
+            out.getvalue())
+
+    def test_get_pytest_env_dry_run(self):
+        """Test that a dry run does not need node"""
+        with mock.patch.object(build, 'get_emsdk', return_value='/nope'):
+            with mock.patch.object(cmdpy.shutil, 'which',
+                                   return_value=None) as mock_which:
+                env = cmdpy.get_pytest_env('sandbox_wasm', {}, dry_run=True)
+        self.assertEqual('/nope', env['EMSDK'])
+        mock_which.assert_not_called()
 
 
 class TestDockerTest(TestBase):
